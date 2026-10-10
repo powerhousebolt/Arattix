@@ -15,7 +15,8 @@ const path = require('path');
 
 const POLL_INTERVAL = 3000;
 const PREFIX = '/';
-const DOWNLOAD_DIR = path.join(__dirname, '..', 'downloads');
+// Relative to the working directory, like cookies.json (/data/downloads in Docker).
+const DOWNLOAD_DIR = path.resolve(process.env.DOWNLOAD_DIR || 'downloads');
 
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 

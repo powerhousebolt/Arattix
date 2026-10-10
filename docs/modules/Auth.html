@@ -23,6 +23,7 @@
     <a href="../index.html">Introduction</a>
     <a href="../getting-started.html">Getting Started</a>
     <a href="../examples.html">Examples</a>
+    <a href="../server.html">REST API Server</a>
     <div class="sidebar-section"><div class="sidebar-section-title">Socket</div></div>
     <a href="../classes/ArattixBot.html">ArattixBot <span class="badge badge-class">C</span></a>
     <a href="../classes/Bot.html">Bot <span class="badge badge-class">C</span></a>
@@ -53,7 +54,7 @@
     The Auth module handles authentication with the Arattai platform. It includes QR code login,
     session persistence, and token-based auth (placeholder for future use).
   </p>
-  <p><strong>Source:</strong> <code>src/Auth/</code></p>
+  <p><strong>Source:</strong> <code>src/auth/</code></p>
 
   <h2 id="exports">Exports</h2>
   <table>
@@ -61,17 +62,17 @@
     <tbody>
       <tr>
         <td><code>QRLogin</code></td>
-        <td><code>Auth/qr-login.js</code></td>
+        <td><code>auth/qr-login.js</code></td>
         <td>Handles QR code authentication flow</td>
       </tr>
       <tr>
         <td><code>SessionManager</code></td>
-        <td><code>Auth/session-manager.js</code></td>
-        <td>Saves/loads session cookies to <code>cookies.json</code></td>
+        <td><code>auth/session-manager.js</code></td>
+        <td>Saves/loads the session to <code>cookies.json</code> and <code>headers.json</code></td>
       </tr>
       <tr>
         <td><code>TokenLogin</code></td>
-        <td><code>Auth/token-login.js</code></td>
+        <td><code>auth/token-login.js</code></td>
         <td>Token-based auth (placeholder for future implementation)</td>
       </tr>
     </tbody>
@@ -79,17 +80,21 @@
 
   <h2 id="qr-login">QRLogin</h2>
   <p>
-    Initiates the QR code login flow. Fetches a QR code from the Arattai accounts server,
-    displays it in the terminal, and polls for the user to scan it.
+    Runs the QR code login flow: fetches a QR code from the Arattai accounts server, optionally prints it
+    in the terminal, and polls until the user scans it with the Arattai app. Expired QR codes are replaced
+    automatically.
   </p>
   <div class="member-card">
     <div class="member-header">
-      <span class="member-name">new QRLogin(session)</span>
+      <span class="member-name">new QRLogin(session, options?)</span>
     </div>
     <div class="member-params">
       <dl>
         <dt>session</dt>
         <dd><code>AxiosInstance</code> — Axios instance with cookie jar.</dd>
+        <dt>options.showQr</dt>
+        <dd><code>boolean</code> — Print the QR code to the terminal. Default: <code>true</code>. Set
+        <code>false</code> to keep the QR (a login credential) out of logs.</dd>
       </dl>
     </div>
   </div>
@@ -98,16 +103,49 @@
       <span class="member-name">initiateLogin()</span>
       <span class="member-tag tag-method">async</span>
     </div>
-    <div class="member-sig">initiateLogin(): Promise&lt;object | null&gt;</div>
+    <div class="member-sig">initiateLogin(): Promise&lt;boolean&gt;</div>
     <div class="member-desc">
-      Starts the QR login flow. Returns the login response on success, or <code>null</code> on failure.
+      Runs the whole flow (request QR, poll every 5 s) and resolves <code>true</code> once the QR is approved.
     </div>
   </div>
+  <div class="member-card">
+    <div class="member-header">
+      <span class="member-name">requestQrData()</span>
+      <span class="member-tag tag-method">async</span>
+    </div>
+    <div class="member-sig">requestQrData(): Promise&lt;object&gt;</div>
+    <div class="member-desc">
+      Requests a new QR code. The string to render is <code>qrResp.qrcodeauth.oneauth_url</code>.
+    </div>
+  </div>
+  <div class="member-card">
+    <div class="member-header">
+      <span class="member-name">pollOnce()</span>
+      <span class="member-tag tag-method">async</span>
+    </div>
+    <div class="member-sig">pollOnce(): Promise&lt;'pending' | 'refreshed' | 'authenticated'&gt;</div>
+    <div class="member-desc">
+      Checks the QR status once (requesting a QR first if none is active). <code>'refreshed'</code> means the old QR
+      expired and a new one is in <code>qrResp</code>. Use it to drive your own loop, with your own deadline and UI.
+    </div>
+  </div>
+  <pre><code class="language-javascript">// Show the QR somewhere other than the terminal (e.g. a web page)
+const { session } = new ArattixBot({ isShowQr: false });
+const qr = new QRLogin(session, { showQr: false });
+await qr.requestQrData();
+render(qr.qrResp.qrcodeauth.oneauth_url);
+
+let status;
+while ((status = await qr.pollOnce()) !== 'authenticated') {
+  if (status === 'refreshed') render(qr.qrResp.qrcodeauth.oneauth_url);
+  await new Promise((r) =&gt; setTimeout(r, 5000));
+}</code></pre>
 
   <h2 id="session-manager">SessionManager</h2>
   <p>
-    Manages session persistence. Saves cookies to <code>cookies.json</code> after successful login
-    and tests cookie validity on startup to skip QR scanning if possible.
+    Manages session persistence. Saves the cookie jar to <code>cookies.json</code> and request headers to
+    <code>headers.json</code> (both in the working directory) after a successful login, and tests them on startup
+    to skip QR scanning when possible. Both files grant access to the account: keep them private.
   </p>
   <div class="member-card">
     <div class="member-header">
@@ -127,7 +165,9 @@
     </div>
     <div class="member-sig">testCookies(): Promise&lt;boolean&gt;</div>
     <div class="member-desc">
-      Test if saved cookies are still valid. Returns <code>true</code> if the session can be reused.
+      Loads the saved session and checks it against Arattai. Returns <code>true</code> only for a <code>2xx</code>
+      answer; the redirect to the login page that an expired session receives counts as invalid. Returns
+      <code>false</code> when either file is missing.
     </div>
   </div>
   <div class="member-card">
@@ -137,7 +177,7 @@
     </div>
     <div class="member-sig">saveSession(): Promise&lt;void&gt;</div>
     <div class="member-desc">
-      Save current session cookies to <code>cookies.json</code>.
+      Save the session to <code>cookies.json</code> and <code>headers.json</code>.
     </div>
   </div>
 
@@ -146,9 +186,9 @@
 2. SessionManager.testCookies() — check saved session
    ├─ Valid → return Bot (skip QR)
    └─ Invalid → continue
-3. QRLogin.initiateLogin() — fetch &amp; display QR code
+3. QRLogin.initiateLogin() — fetch &amp; display QR code (if isShowQr)
 4. User scans QR with Arattai mobile app
-5. SessionManager.saveSession() — persist cookies
+5. SessionManager.saveSession() — persist cookies.json + headers.json (only on success)
 6. Return authenticated Bot instance</code></pre>
 
   <div class="callout">

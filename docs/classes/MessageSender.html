@@ -23,6 +23,7 @@
     <a href="../index.html">Introduction</a>
     <a href="../getting-started.html">Getting Started</a>
     <a href="../examples.html">Examples</a>
+    <a href="../server.html">REST API Server</a>
     <div class="sidebar-section"><div class="sidebar-section-title">Socket</div></div>
     <a href="ArattixBot.html">ArattixBot <span class="badge badge-class">C</span></a>
     <a href="Bot.html">Bot <span class="badge badge-class">C</span></a>
@@ -158,12 +159,47 @@ await bot.sender.sendMessage('Hello!', { chat });</code></pre>
     </div>
   </div>
 
+  <div class="member-card">
+    <div class="member-header">
+      <span class="member-name">sendStream(stream, fileName, options)</span>
+      <span class="member-tag tag-method">async</span>
+    </div>
+    <div class="member-sig">sendStream(stream: Readable, fileName: string, { chatId?, chat?, size, mimeType?, caption? }): Promise&lt;object&gt;</div>
+    <div class="member-desc">
+      Upload from a readable stream without loading the file into memory. Use it for large media.
+    </div>
+    <div class="member-params">
+      <dl>
+        <dt>stream</dt>
+        <dd><code>Readable</code> — The file data.</dd>
+        <dt>fileName</dt>
+        <dd><code>string</code> — Display name; also used to detect the MIME type.</dd>
+        <dt>options.size</dt>
+        <dd><code>number</code> — <strong>Required.</strong> Exact byte length, sent as <code>Content-Length</code>.</dd>
+        <dt>options.mimeType</dt>
+        <dd><code>string</code> — MIME type override.</dd>
+        <dt>options.caption</dt>
+        <dd><code>string</code> — Caption. Default: <code>""</code></dd>
+      </dl>
+    </div>
+  </div>
+
   <pre><code class="language-javascript">// Send file from disk
 await bot.sender.sendFile('/path/to/photo.jpg', 'Nice photo!', { chatId });
 
 // Send buffer
 const data = fs.readFileSync('report.pdf');
-await bot.sender.sendBuffer(data, 'report.pdf', { chatId, caption: 'Monthly report' });</code></pre>
+await bot.sender.sendBuffer(data, 'report.pdf', { chatId, caption: 'Monthly report' });
+
+// Stream a large file
+const { size } = fs.statSync('video.mp4');
+await bot.sender.sendStream(fs.createReadStream('video.mp4'), 'video.mp4', { chatId, size });</code></pre>
+
+  <div class="callout">
+    <strong>Message ids</strong>
+    Each send gets a millisecond-based <code>msgid</code> that is unique within the process, even for concurrent
+    sends in the same millisecond.
+  </div>
 
   <!-- Convenience Methods -->
   <h2 id="convenience">Convenience Methods</h2>

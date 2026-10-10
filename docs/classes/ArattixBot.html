@@ -24,6 +24,7 @@
     <a href="../index.html">Introduction</a>
     <a href="../getting-started.html">Getting Started</a>
     <a href="../examples.html">Examples</a>
+    <a href="../server.html">REST API Server</a>
     <div class="sidebar-section"><div class="sidebar-section-title">Socket</div></div>
     <a href="ArattixBot.html" class="active">ArattixBot <span class="badge badge-class">C</span></a>
     <a href="Bot.html">Bot <span class="badge badge-class">C</span></a>
@@ -72,9 +73,12 @@
     <div class="member-params">
       <dl>
         <dt>options.isShowQr</dt>
-        <dd><code>boolean</code> — Display QR code in the terminal. Default: <code>true</code></dd>
+        <dd><code>boolean</code> — Display QR code in the terminal. Default: <code>true</code>. With
+        <code>false</code> the QR is never printed.</dd>
         <dt>options.proxy</dt>
-        <dd><code>string | null</code> — HTTP proxy URL (e.g. <code>"http://127.0.0.1:8080"</code>). Default: <code>null</code></dd>
+        <dd><code>string | null</code> — HTTP proxy URL. <strong>Currently broken:</strong> setting it throws, because
+        <code>axios-cookiejar-support</code> rejects custom HTTP agents. Route traffic through a proxy at the
+        network level instead. Default: <code>null</code></dd>
       </dl>
     </div>
   </div>
@@ -84,11 +88,14 @@
 // Default — show QR in terminal
 const arattix = new ArattixBot();
 
-// With options
-const arattix = new ArattixBot({
-  isShowQr: true,
-  proxy: 'http://127.0.0.1:8080'
-});</code></pre>
+// Headless (servers, containers): never print the QR
+const arattix = new ArattixBot({ isShowQr: false });</code></pre>
+
+  <div class="callout">
+    <strong>Timeouts</strong>
+    Every request made through the session times out after <code>Defaults.DEFAULT_TIMEOUT</code> (10 s);
+    uploads use <code>Defaults.MEDIA_TIMEOUT</code> (30 s of inactivity).
+  </div>
 
   <!-- Properties -->
   <h2 id="properties">Properties</h2>

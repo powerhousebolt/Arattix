@@ -6,6 +6,8 @@
 #
 # Run from the repository root or pass -f as above; the build context is the repo root.
 
+name: arattix-server
+
 x-app: &app
   build:
     context: ..
