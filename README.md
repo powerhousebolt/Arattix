@@ -9,7 +9,7 @@ This repository contains:
 | Part | What it is | Docs |
 |---|---|---|
 | **Library** (`src/`) | `arattix` npm package: QR login, session persistence, chats, messages, text and file sending, media download | this README, [docs site](docs/index.html) |
-| **REST API server** (`server/`) | Production HTTP API around the library: encrypted sessions, paced sending, broadcasts, signed webhooks, health/metrics, Docker/PM2 | [server/README.md](server/README.md), [API reference](server/API_REFERENCE.md), [library audit](server/AUDIT.md) |
+| **REST API server** (`server/`) | Production HTTP API around the library: encrypted sessions, paced sending, broadcasts, signed webhooks, admin web UI, health/metrics, Docker/PM2 | [server/README.md](server/README.md), [API reference](server/API_REFERENCE.md), [library audit](server/AUDIT.md) |
 | **Examples** (`Example/`) | Polling bot, command bot, Docker bot | [Examples](#examples) |
 
 > **How it works.** Arattix talks to Arattai's web endpoints over plain HTTP (axios with a
@@ -142,6 +142,9 @@ docker compose --profile server up -d --build server
 curl -s localhost:3000/health/ready
 ```
 
+Then open <http://localhost:3000/ui/>, sign in with one of your `API_KEYS` and scan the QR code
+on the **Arattai login** page.
+
 `SERVER_PORT=8080 docker compose --profile server up -d server` changes the published port.
 For the split deployment (Redis, scalable API processes, one session worker) use
 `docker compose -f server/docker-compose.yml up -d --build`. See
@@ -172,7 +175,10 @@ docker compose up -d bot
 | Broadcasts | `POST /api/v1/channels/broadcast` (chunked, delayed), `GET /api/v1/channels/broadcast/{id}` |
 | Webhooks | `POST /api/v1/webhooks/subscribe` (HMAC `X-Arattai-Signature`), list, get, delete, test |
 | Groups | `POST /api/v1/groups/create`, `PUT /api/v1/groups/{id}/members` (validated; `501` until the library supports them) |
-| Ops | `GET /health/live`, `GET /health/ready`, `GET /metrics`, `GET /api/v1/jobs/{id}` |
+| Tasks | `GET /api/v1/jobs` (filter by queue, state, name), `GET /api/v1/jobs/{id}`, `POST /api/v1/jobs/{id}/retry`, `DELETE /api/v1/jobs/{id}`, `GET /api/v1/queues` |
+| Admin | `GET /api/v1/system`, `GET /api/v1/logs`, `GET /api/v1/events`, `GET`/`PUT /api/v1/settings`, `POST /api/v1/system/restart` |
+| Ops | `GET /health/live`, `GET /health/ready`, `GET /metrics` |
+| Web UI | `/ui/`: dashboard, Arattai QR login, chats, send and broadcast, tasks, logs, events, webhooks, settings |
 
 Highlights: the session is encrypted at rest and restored on restart; reconnects use backoff and
 a circuit breaker; outbound messages are throttled to avoid account flagging; `Idempotency-Key`

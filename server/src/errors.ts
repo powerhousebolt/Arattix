@@ -127,6 +127,7 @@ export const Errors = {
     new AppError({ status: 410, code: 'JOB_EXPIRED', message: 'Job expired before it could be executed' }),
   shuttingDown: () =>
     new AppError({ status: 503, code: 'SHUTTING_DOWN', message: 'Server is shutting down', retryable: true, retryAfterMs: 5_000 }),
+  cancelled: () => new AppError({ status: 410, code: 'JOB_CANCELLED', message: 'Job was cancelled before it ran' }),
   internal: (cause?: unknown) => new AppError({ status: 500, code: 'INTERNAL', message: 'Internal error', cause }),
 };
 

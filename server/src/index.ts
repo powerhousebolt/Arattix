@@ -1,5 +1,6 @@
 import { loadConfig } from './config';
 import { createRuntime } from './runtime';
+import { readStoredOverrides, type Overrides } from './settings';
 import { AbortedError } from './util';
 
 async function main(): Promise<void> {
@@ -11,8 +12,24 @@ async function main(): Promise<void> {
     process.exit(78); // EX_CONFIG: a supervisor should not hot-loop on bad config
   }
 
+  // Settings saved from the admin UI win over the environment. A bad stored value must never
+  // keep the server from booting: fall back to the environment and say so.
+  let overrides: Overrides = {};
+  let overrideProblem: string | null = null;
+  try {
+    overrides = await readStoredOverrides(config);
+    if (Object.keys(overrides).length > 0) config = loadConfig(process.env, overrides);
+  } catch (err) {
+    overrideProblem = (err as Error).message;
+  }
+
   const runtime = createRuntime(config);
   const { logger } = runtime;
+  if (overrideProblem) {
+    logger.error('Ignoring stored settings overrides', { component: 'settings', error: overrideProblem, keys: Object.keys(overrides) });
+  } else if (Object.keys(overrides).length > 0) {
+    logger.info('Applied stored settings overrides', { component: 'settings', keys: Object.keys(overrides) });
+  }
   let shuttingDown = false;
 
   const shutdown = async (signal: string, code = 0) => {

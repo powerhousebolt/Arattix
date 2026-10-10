@@ -52,7 +52,9 @@ export function accessLog(logger: Logger, metrics: Metrics): RequestHandler {
         status: res.statusCode,
       });
       metrics.inc('http_request_duration_ms_sum', 'Total HTTP request time by route.', { route }, ms);
-      const level = res.statusCode >= 500 ? 'error' : route.startsWith('/health') ? 'debug' : 'http';
+      // Health probes and the admin UI's log/event tailing would otherwise drown the log feed.
+      const quiet = route.startsWith('/health') || (req.method === 'GET' && (route === '/api/v1/logs' || route === '/api/v1/events'));
+      const level = res.statusCode >= 500 ? 'error' : quiet ? 'debug' : 'http';
       logger.log(level, `${req.method} ${req.originalUrl} ${res.statusCode}`, {
         component: 'http',
         requestId: res.locals.requestId,

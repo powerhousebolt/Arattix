@@ -7,6 +7,8 @@ import crypto from 'node:crypto';
 import { Redis } from 'ioredis';
 import request from 'supertest';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import winston from 'winston';
+import { RedisRecentFeed } from '../src/activity/recent';
 import { AppError } from '../src/errors';
 import { RedisKeyValueStore } from '../src/kv';
 import { createSilentLogger } from '../src/logger';
@@ -14,6 +16,7 @@ import { BullJobQueue } from '../src/queue/bullmq-queue';
 import { JobWaitTimeoutError } from '../src/queue/types';
 import { createRuntime, type Runtime } from '../src/runtime';
 import { Lease } from '../src/session/lease';
+import { readStoredOverrides } from '../src/settings';
 import { API_KEY, tempDir, testConfig, waitUntil } from './helpers/env';
 import { FakeGateway } from './helpers/fake-gateway';
 
@@ -76,6 +79,60 @@ describe.skipIf(!REDIS_URL)('BullJobQueue', () => {
     expect(await q.add('n', 1, { jobId: 'fixed-id' })).toEqual({ id: a.id, deduplicated: true });
     await expect(q.waitForResult(a.id, 200)).rejects.toBeInstanceOf(JobWaitTimeoutError);
     await expect(q.add('n', 2)).rejects.toMatchObject({ code: 'QUEUE_FULL' });
+  });
+});
+
+describe.skipIf(!REDIS_URL)('BullJobQueue admin operations', () => {
+  it('lists jobs newest first per state, retries failed ones and cancels pending ones', async () => {
+    const q = new BullJobQueue(`q-${prefix()}`, { prefix: prefix(), maxPending: 100, connect: redis }, logger);
+    closers.push(() => q.close());
+    let fail = true;
+    q.process(async (job) => {
+      if (job.name === 'boom' && fail) throw new AppError({ status: 400, code: 'NOPE', message: 'no' });
+      return job.data;
+    }, 1);
+    const a = await q.add('ok', { n: 1 });
+    await q.waitForResult(a.id, 5000);
+    const b = await q.add('boom', { n: 2 });
+    await q.waitForResult(b.id, 5000).catch(() => undefined);
+    const c = await q.add('ok', { n: 3 }, { delayMs: 60_000 });
+
+    const listed = await q.list(['completed', 'failed', 'delayed'], 10);
+    expect(listed.map((j) => [j.id, j.state])).toEqual([
+      [c.id, 'delayed'],
+      [b.id, 'failed'],
+      [a.id, 'completed'],
+    ]);
+    expect(listed[1]).toMatchObject({ data: { n: 2 }, error: { code: 'NOPE' } });
+
+    fail = false;
+    expect(await q.retry(a.id)).toBe(false);
+    expect(await q.retry(b.id)).toBe(true);
+    await waitUntil(async () => (await q.getJob(b.id))?.state === 'completed', 5000);
+
+    expect(await q.cancel(c.id)).toBe(true);
+    expect(await q.getJob(c.id)).toBeNull();
+    expect(await q.cancel(a.id)).toBe(false);
+  });
+});
+
+describe.skipIf(!REDIS_URL)('RedisRecentFeed', () => {
+  it('shares a capped feed with sequence numbers across connections', async () => {
+    const key = `${prefix()}:recent:test`;
+    const conns = [redis(), redis()];
+    const writer = new RedisRecentFeed<{ n: number }>(conns[0]!, key, 3);
+    const reader = new RedisRecentFeed<{ n: number }>(conns[1]!, key, 3);
+    await waitUntil(() => conns.every((c) => c.status === 'ready'));
+    for (let n = 1; n <= 5; n += 1) writer.push({ n });
+    await waitUntil(async () => (await reader.list({ limit: 10 })).at(-1)?.n === 5);
+    expect((await reader.list({ limit: 10 })).map((e) => [e.n, e.seq])).toEqual([
+      [3, 3],
+      [4, 4],
+      [5, 5],
+    ]);
+    expect((await reader.list({ limit: 10, after: 4 })).map((e) => e.n)).toEqual([5]);
+    await reader.clear();
+    expect(await reader.list({ limit: 10 })).toEqual([]);
   });
 });
 
@@ -155,6 +212,47 @@ describe.skipIf(!REDIS_URL)('split deployment (ROLE=api + ROLE=worker)', () => {
     await worker.stop();
     const offline = await http.post('/api/v1/messages/send').set(auth).send({ chatId: 'CT_1', text: 'x' }).expect(503);
     expect(offline.body.error.code).toBe('WORKER_UNAVAILABLE');
+  });
+
+  it('shows the worker\'s logs, events and tasks through the API process, and shares settings', async () => {
+    const shared = {
+      REDIS_URL: REDIS_URL!,
+      REDIS_PREFIX: prefix(),
+      STORE_DRIVER: 'redis',
+      QUEUE_DRIVER: 'bullmq',
+      DATA_DIR: tempDir(),
+      LEASE_TTL_MS: '5000',
+      LOG_LEVEL: 'info',
+      HTTP_RATE_LIMIT_PER_MINUTE: '10000',
+    };
+    const gateway = new FakeGateway();
+    const workerLogger = winston.createLogger({ level: 'info', format: winston.format.timestamp(), defaultMeta: { role: 'worker' }, transports: [] });
+    const worker = createRuntime(testConfig({ ...shared, ROLE: 'worker' }), { gateway, logger: workerLogger, onFatal: () => undefined });
+    const api = createRuntime(testConfig({ ...shared, ROLE: 'api' }), { logger });
+    runtimes.push(api, worker);
+    await Promise.all([worker.start(), api.start()]);
+    await worker.whenActive();
+    const http = request(api.app);
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    gateway.qrScript = ['authenticated'];
+    await http.post('/api/v1/auth/session').set(auth).send({}).expect(200);
+    await waitUntil(async () => (await http.get('/api/v1/auth/status').set(auth)).body.data.state === 'READY', 5000);
+    await http.post('/api/v1/messages/send').set(auth).send({ chatId: 'CT_1', text: 'hello' }).expect(200);
+
+    await waitUntil(async () => {
+      const logs = (await http.get('/api/v1/logs?component=connection').set(auth).expect(200)).body.data.entries;
+      return logs.some((l: { role: string; message: string }) => l.role === 'worker' && /READY/.test(l.message));
+    }, 5000, 100);
+    await waitUntil(async () => {
+      const events = (await http.get('/api/v1/events?type=message.sent').set(auth).expect(200)).body.data.entries;
+      return events.length === 1;
+    }, 5000, 100);
+    const jobs = (await http.get('/api/v1/jobs?queue=outbound').set(auth).expect(200)).body.data;
+    expect(jobs[0]).toMatchObject({ name: 'message.text', state: 'completed', data: { chatId: 'CT_1', text: 'hello' } });
+
+    await http.put('/api/v1/settings').set(auth).send({ values: { SEND_BURST: '9' } }).expect(200);
+    expect(await readStoredOverrides(worker.config)).toEqual({ SEND_BURST: '9' });
   });
 
   it('keeps a second worker on standby (alive, not ready) until the lease is free', async () => {

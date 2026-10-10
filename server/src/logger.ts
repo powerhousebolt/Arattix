@@ -5,7 +5,7 @@ export type Logger = winston.Logger;
 /** Keys whose values must never reach a log sink (cookies, tickets, signing secrets, QR login data). */
 const SENSITIVE_KEY = /^(authorization|cookie|set-cookie|x-zcsrf-token|z-authorization|x-api-key|secret|secretenc|password|token|qr|qrdata|dataurl|cookies|master_key|api_keys)$/i;
 
-function redact(value: unknown, depth = 0): unknown {
+export function redact(value: unknown, depth = 0): unknown {
   if (depth > 6 || value === null || typeof value !== 'object') return value;
   if (value instanceof Error) return value;
   if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
@@ -28,12 +28,12 @@ const redactFormat = winston.format((info) => {
 });
 
 export function createLogger(opts: { level: string; format: 'json' | 'pretty'; role: string; sessionId: string }): Logger {
-  const base = [winston.format.timestamp(), winston.format.errors({ stack: true }), redactFormat()];
-  const format =
+  // Redaction runs at the logger level so every transport (console, the admin log buffer) only
+  // ever sees redacted records; rendering (JSON / colours) is the console transport's business.
+  const output =
     opts.format === 'json'
-      ? winston.format.combine(...base, winston.format.json())
+      ? winston.format.json()
       : winston.format.combine(
-          ...base,
           winston.format.colorize(),
           winston.format.printf(({ timestamp, level, message, component, stack, ...rest }) => {
             delete rest.role;
@@ -46,9 +46,9 @@ export function createLogger(opts: { level: string; format: 'json' | 'pretty'; r
 
   return winston.createLogger({
     level: opts.level,
-    format,
+    format: winston.format.combine(winston.format.timestamp(), winston.format.errors({ stack: true }), redactFormat()),
     defaultMeta: { role: opts.role, sessionId: opts.sessionId, pid: process.pid },
-    transports: [new winston.transports.Console({ stderrLevels: ['error'] })],
+    transports: [new winston.transports.Console({ format: output, stderrLevels: ['error'] })],
   });
 }
 
