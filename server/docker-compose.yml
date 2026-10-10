@@ -1,0 +1,65 @@
+# Split deployment: Redis + API (scalable) + one session worker.
+#
+#   cp .env.example .env   # fill in API_KEYS and MASTER_KEY
+#   docker compose -f server/docker-compose.yml up -d --build
+#   docker compose -f server/docker-compose.yml up -d --scale api=3   # behind your load balancer
+#
+# Run from the repository root or pass -f as above; the build context is the repo root.
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: server/Dockerfile
+  image: arattix-server:latest
+  env_file: .env
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 35s
+  volumes:
+    # API writes uploads here; the worker streams them to Arattai. Must be shared.
+    - spool:/data
+  depends_on:
+    redis:
+      condition: service_healthy
+  logging:
+    driver: json-file
+    options: { max-size: '20m', max-file: '5' }
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app
+    environment:
+      ROLE: api
+      QUEUE_DRIVER: bullmq
+      STORE_DRIVER: redis
+      REDIS_URL: redis://redis:6379
+      TRUST_PROXY: '1'
+    ports:
+      - '3000:3000'
+
+  worker:
+    <<: *app
+    environment:
+      ROLE: worker
+      QUEUE_DRIVER: bullmq
+      STORE_DRIVER: redis
+      REDIS_URL: redis://redis:6379
+    # One per SESSION_ID. A second replica would only wait on standby for the lease.
+    deploy:
+      replicas: 1
+
+volumes:
+  redis:
+  spool:
