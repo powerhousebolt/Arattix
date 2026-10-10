@@ -2,7 +2,16 @@ import { Job, Queue, QueueEvents, UnrecoverableError, Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { AppError, Errors, fromWireMessage, toAppError, toWireMessage } from '../errors';
 import type { Logger } from '../logger';
-import { JobWaitTimeoutError, type JobCounts, type JobHandler, type JobOptions, type JobQueue, type JobRecord, type JobState } from './types';
+import {
+  JobWaitTimeoutError,
+  type JobCounts,
+  type JobHandler,
+  type JobOptions,
+  type JobQueue,
+  type JobRecord,
+  type JobState,
+  type ListableState,
+} from './types';
 
 export interface BullQueueOptions {
   prefix: string;
@@ -85,22 +94,44 @@ export class BullJobQueue implements JobQueue {
   async getJob(id: string): Promise<JobRecord | null> {
     const job = await Job.fromId(this.queue, id);
     if (!job) return null;
-    const state = mapState(await job.getState());
-    // failedReason is also set on a job waiting to retry: it is the last attempt's error.
-    const error = job.failedReason
-      ? (fromWireMessage(job.failedReason) ?? new AppError({ status: 500, code: 'INTERNAL', message: job.failedReason }))
-      : null;
-    return {
-      id: String(job.id),
-      name: job.name,
-      state,
-      progress: job.progress ?? null,
-      ...(state === 'completed' ? { result: job.returnvalue } : {}),
-      ...(error ? { error: error.toJSON() } : {}),
-      attemptsMade: job.attemptsMade,
-      createdAt: new Date(job.timestamp).toISOString(),
-      finishedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
+    return toRecord(job, mapState(await job.getState()));
+  }
+
+  async list(states: readonly ListableState[], limit: number): Promise<JobRecord[]> {
+    const types: Record<ListableState, Array<'waiting' | 'prioritized' | 'paused' | 'delayed' | 'active' | 'completed' | 'failed'>> = {
+      waiting: ['waiting', 'prioritized', 'paused'],
+      delayed: ['delayed'],
+      active: ['active'],
+      completed: ['completed'],
+      failed: ['failed'],
     };
+    const records: JobRecord[] = [];
+    // Per state so each record knows its state without another round trip per job.
+    for (const state of states) {
+      const jobs = await this.queue.getJobs(types[state], 0, limit - 1, false);
+      for (const job of jobs) if (job) records.push({ ...toRecord(job, state), data: job.data });
+    }
+    return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  }
+
+  async retry(id: string): Promise<boolean> {
+    const job = await Job.fromId(this.queue, id);
+    if (!job || (await job.getState()) !== 'failed') return false;
+    await job.retry('failed', { resetAttemptsMade: true, resetAttemptsStarted: true });
+    return true;
+  }
+
+  async cancel(id: string): Promise<boolean> {
+    const job = await Job.fromId(this.queue, id);
+    if (!job) return false;
+    const state = mapState(await job.getState());
+    if (state !== 'waiting' && state !== 'delayed') return false;
+    try {
+      await job.remove();
+      return true;
+    } catch {
+      return false; // picked up by the worker in the meantime
+    }
   }
 
   process(handler: JobHandler, concurrency: number): void {
@@ -162,6 +193,24 @@ export class BullJobQueue implements JobQueue {
     await this.eventsReady;
     return this.events;
   }
+}
+
+function toRecord(job: Job, state: JobState): JobRecord {
+  // failedReason is also set on a job waiting to retry: it is the last attempt's error.
+  const error = job.failedReason
+    ? (fromWireMessage(job.failedReason) ?? new AppError({ status: 500, code: 'INTERNAL', message: job.failedReason }))
+    : null;
+  return {
+    id: String(job.id),
+    name: job.name,
+    state,
+    progress: job.progress ?? null,
+    ...(state === 'completed' ? { result: job.returnvalue } : {}),
+    ...(error ? { error: error.toJSON() } : {}),
+    attemptsMade: job.attemptsMade,
+    createdAt: new Date(job.timestamp).toISOString(),
+    finishedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
+  };
 }
 
 function mapState(state: string): JobState {

@@ -80,6 +80,7 @@
     <li><strong>Media</strong>: multipart uploads streamed from disk to Arattai; downloads streamed back.</li>
     <li><strong>Broadcasts</strong>: chunked sends with delays, per-recipient results, no duplicates after a crash.</li>
     <li><strong>Webhooks</strong>: inbound messages and session events, HMAC-signed (<code>X-Arattai-Signature</code>), retried, SSRF-protected.</li>
+    <li><strong>Admin web UI</strong> at <code>/ui/</code>: QR login, chats and replies, sending and broadcasts, tasks with retry and cancel, live logs and events, webhooks, and editable settings.</li>
     <li><strong>Operations</strong>: health and Prometheus metrics, JSON logs with secret redaction, Docker, Compose and PM2 configs, worker failover.</li>
   </ul>
 
@@ -97,6 +98,7 @@ cp server/.env.example server/.env
 # set API_KEYS (openssl rand -hex 24) and MASTER_KEY (openssl rand -hex 32) in server/.env
 docker compose --profile server up -d --build server
 curl -s localhost:3000/health/ready</code></pre>
+  <p>Then open <code>http://localhost:3000/ui/</code> and sign in with one of your <code>API_KEYS</code>.</p>
 
   <p>Without Docker (Node.js 20.6+):</p>
   <pre><code class="language-bash">npm install                 # library dependencies (repository root)
@@ -105,6 +107,7 @@ cp .env.example .env        # set API_KEYS and MASTER_KEY
 node --env-file=.env dist/index.js</code></pre>
 
   <h2 id="login">Logging In</h2>
+  <p>The easiest way is the admin UI: <strong>Arattai login → Start QR login</strong>, then scan the code shown on the page. With the API:</p>
   <pre><code class="language-bash">KEY=your-api-key
 # Start a QR login; the response contains the QR as text (qr.data) and as a PNG (qr.dataUrl)
 curl -s -X POST localhost:3000/api/v1/auth/session -H "Authorization: Bearer $KEY" \
@@ -179,10 +182,17 @@ function verify(secret, header, rawBody) {
       <tr><td>POST</td><td><code>/api/v1/channels/broadcast</code></td><td>Chunked broadcast</td></tr>
       <tr><td>GET</td><td><code>/api/v1/channels/broadcast/{id}</code></td><td>Broadcast progress and results</td></tr>
       <tr><td>GET</td><td><code>/api/v1/jobs/{id}</code></td><td>Any job's state and result</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/jobs</code>, <code>/api/v1/queues</code></td><td>List tasks (by queue, state, name) and queue counts</td></tr>
+      <tr><td>POST / DELETE</td><td><code>/api/v1/jobs/{id}/retry</code>, <code>/api/v1/jobs/{id}</code></td><td>Retry a failed task, cancel a waiting one</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/system</code></td><td>Version, role, uptime, session, queues</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/logs</code>, <code>/api/v1/events</code></td><td>Recent log records and events (tail with <code>after</code>)</td></tr>
+      <tr><td>GET / PUT</td><td><code>/api/v1/settings</code></td><td>Effective settings; save overrides</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/system/restart</code></td><td>Graceful restart (needs a supervisor)</td></tr>
       <tr><td>POST</td><td><code>/api/v1/webhooks/subscribe</code></td><td>Create a subscription</td></tr>
       <tr><td>GET / DELETE</td><td><code>/api/v1/webhooks[/{id}]</code></td><td>List, get, unsubscribe</td></tr>
       <tr><td>POST</td><td><code>/api/v1/webhooks/{id}/test</code></td><td>Send a signed test event</td></tr>
       <tr><td>GET</td><td><code>/health/live</code>, <code>/health/ready</code>, <code>/metrics</code></td><td>Probes and Prometheus metrics (no API key)</td></tr>
+      <tr><td>GET</td><td><code>/ui/</code></td><td>Admin web UI (data loads with your API key)</td></tr>
     </tbody>
   </table>
   <p>All <code>/api/v1</code> routes need <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key</code>.</p>

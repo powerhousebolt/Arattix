@@ -21,7 +21,12 @@ export interface JobRecord {
   attemptsMade: number;
   createdAt: string;
   finishedAt: string | null;
+  /** Job payload; only filled in by list(). */
+  data?: unknown;
 }
+
+export type ListableState = 'waiting' | 'delayed' | 'active' | 'completed' | 'failed';
+export const LISTABLE_STATES: readonly ListableState[] = ['waiting', 'delayed', 'active', 'completed', 'failed'];
 
 export interface JobContext<D = unknown> {
   id: string;
@@ -50,6 +55,12 @@ export interface JobQueue {
   getJob(id: string): Promise<JobRecord | null>;
   process(handler: JobHandler, concurrency: number): void;
   counts(): Promise<JobCounts>;
+  /** Newest jobs first, at most `limit`, in any of `states`; includes each job's data. */
+  list(states: readonly ListableState[], limit: number): Promise<JobRecord[]>;
+  /** Re-run a failed job from its first attempt. Returns false when the job is not failed. */
+  retry(id: string): Promise<boolean>;
+  /** Remove a job that has not started (waiting or delayed). Returns false otherwise. */
+  cancel(id: string): Promise<boolean>;
   close(): Promise<void>;
 }
 

@@ -70,7 +70,10 @@ instead of sending twice. Keys are remembered while the job is retained (24 h fo
 | 409 | `SESSION_NOT_READY` | Session is not `READY`; `details.state`, `details.reason` | after login |
 | 409 | `SESSION_EXPIRED` | Arattai rejected the session during the job | after re-scan |
 | 409 | `WEBHOOK_INACTIVE` | Testing a disabled subscription | no |
+| 409 | `JOB_NOT_RETRYABLE` / `JOB_NOT_CANCELLABLE` | Retrying a job that is not failed, cancelling one that already started | no |
+| 400 | `SETTING_NOT_EDITABLE` | `PUT /settings` named a secret, topology or unknown key | fix request |
 | 410 | `JOB_EXPIRED` | A queued send passed its TTL before it could run | resend if still relevant |
+| 410 | `JOB_CANCELLED` | The job was cancelled through `DELETE /jobs/{id}` before it ran | no |
 | 413 | `PAYLOAD_TOO_LARGE` | Upload above `MEDIA_MAX_BYTES`, or JSON above 256 kB | no |
 | 429 | `RATE_LIMITED` | Over `HTTP_RATE_LIMIT_PER_MINUTE` for this API key | after `Retry-After` |
 | 501 | `CAPABILITY_UNAVAILABLE` | The fork has no verified Arattai endpoint for this (reactions, groups) | no |
@@ -879,7 +882,140 @@ curl -s -X POST "$BASE/api/v1/webhooks/wh_a7cf31d75eb6478c934032f53f6f0345/test"
 
 ---
 
+## Administration (tasks, logs, events, settings)
+
+These back the admin web UI at `/ui/` and are ordinary `/api/v1` routes with the same API key.
+
+### `GET /system`: server overview
+
+```bash
+curl -s "$BASE/api/v1/system" -H "Authorization: Bearer $KEY"
+```
+
+**200** `data`: `version`, `node`, `pid`, `role`, `sessionId`, `storeDriver`, `queueDriver`,
+`startedAt`, `uptimeSeconds`, `memory { rss, heapUsed, heapTotal }`, `logLevel`, `session` (same
+shape as `GET /auth/status`), `capabilities`, and `queues { control|outbound|broadcast|webhooks:
+{ waiting, active, delayed, completed, failed } }`.
+
+### `POST /system/restart`
+
+**202** `{ "restarting": true, "role", "note" }`, then a graceful shutdown. A supervisor must
+start the process again. In a split deployment only the receiving process restarts.
+
+### `GET /queues`
+
+**200** `[{ "queue": "outbound", "counts": { "waiting": 0, "active": 1, "delayed": 0, "completed": 12, "failed": 1 } }, …]`
+
+### `GET /jobs`: list tasks
+
+| Query | Default | |
+|---|---|---|
+| `queue` | all | comma-separated: `control,outbound,broadcast,webhooks` |
+| `state` | all | comma-separated: `waiting,delayed,active,completed,failed` |
+| `name` | — | exact job name, e.g. `message.text`, `auth.start`, `broadcast`, `deliver` |
+| `limit` | 50 | 1–200 |
+
+```bash
+curl -s "$BASE/api/v1/jobs?queue=outbound&state=failed" -H "Authorization: Bearer $KEY"
+```
+
+**200** newest first; each item is the `GET /jobs/{jobId}` shape plus `data` (the job payload;
+internal spool paths removed):
+
+```json
+{
+  "data": [
+    {
+      "id": "out_0abbfbfc-…-CT_bad",
+      "queue": "outbound",
+      "name": "message.text",
+      "state": "failed",
+      "attemptsMade": 1,
+      "createdAt": "2026-10-10T11:12:57.120Z",
+      "finishedAt": "2026-10-10T11:12:57.130Z",
+      "error": { "status": 502, "code": "UPSTREAM_REJECTED", "message": "Arattai refused the message", "retryable": false },
+      "data": { "chatId": "CT_bad", "text": "Release 1.4 is live.", "expiresAt": 1791631377245 }
+    }
+  ],
+  "requestId": "…"
+}
+```
+
+### `POST /jobs/{jobId}/retry`
+
+Re-queues a **failed** job from its first attempt. **202** `{ "id", "retried": true, "statusUrl" }`;
+**409** `JOB_NOT_RETRYABLE` otherwise. A send whose TTL passed fails again with `JOB_EXPIRED`;
+resend it instead.
+
+### `DELETE /jobs/{jobId}`: cancel
+
+Removes a **waiting** or **delayed** job so it never runs. **200** `{ "id", "cancelled": true }`;
+**409** `JOB_NOT_CANCELLABLE` once it has started or finished.
+
+### `GET /logs`: recent log records
+
+| Query | Default | |
+|---|---|---|
+| `after` | — | only records with `seq` greater than this (tail with the previous `cursor`) |
+| `limit` | 200 | 1–1000, newest records matching the filters, returned oldest first |
+| `level` | — | minimum severity: `warn` returns `warn` and `error` |
+| `component` | — | e.g. `http`, `connection`, `queue`, `webhooks`, `broadcast` |
+| `q` | — | case-insensitive text search in message and fields |
+
+**200**
+
+```json
+{
+  "data": {
+    "entries": [
+      { "seq": 42, "at": "2026-10-10T11:12:57.247Z", "level": "info", "message": "Broadcast finished", "component": "broadcast", "role": "all", "pid": 1, "meta": { "broadcastId": "…", "sent": 3 } }
+    ],
+    "cursor": 42,
+    "bufferSize": 2000
+  },
+  "requestId": "…"
+}
+```
+
+Records are redacted like the console log. The buffer keeps the last `LOG_BUFFER_SIZE` records
+at or above `LOG_LEVEL`. `DELETE /logs` clears it.
+
+### `GET /events`: recent events
+
+`after`, `limit` (1–500, default 100) and `type` (comma-separated event types) as above.
+Entries: `{ seq, id, type, occurredAt, data }`, the same events webhooks receive, with `raw`
+upstream payloads dropped and `session.qr` data replaced by `{ "redacted": true }`.
+
+### `GET /settings`
+
+**200** `{ "settings": [ … ], "restartRequired": false }`, one item per setting:
+
+```json
+{ "key": "SEND_RATE_PER_MINUTE", "group": "Outbound pacing", "description": "Sustained sends per minute.", "value": "20", "source": "env", "editable": true, "live": false, "secret": false, "pending": null }
+```
+
+`source`: `env`, `default` or `override` (saved through this API). `pending`: a saved value
+that this process has not applied yet (`""` means a removed override). Secret values are never
+returned: `"configured"`, `"2 keys configured"`, or a URL with its password masked.
+
+### `PUT /settings`
+
+```bash
+curl -s -X PUT "$BASE/api/v1/settings" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+     -d '{"values":{"SEND_RATE_PER_MINUTE":"30","LOG_LEVEL":"http","SELF_USER_ID":null}}'
+```
+
+`null` (or `""`) removes an override. The whole resulting configuration is validated first:
+**400** `VALIDATION_FAILED` with per-key `details`, or `SETTING_NOT_EDITABLE` for secrets,
+topology and unknown keys. **200** returns the `GET /settings` shape. `LOG_LEVEL` applies
+immediately in the receiving process; everything else on the next start (`restartRequired`).
+
+---
+
 ## Operations endpoints (no API key)
+
+The admin UI itself is served at `GET /ui/` (static files; `/` redirects there) unless
+`UI_ENABLED=false`. It needs an API key to load any data.
 
 ### `GET /health/live`
 

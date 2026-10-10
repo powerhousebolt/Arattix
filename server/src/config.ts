@@ -95,6 +95,11 @@ const schema = z
     WEBHOOK_MAX_CONSECUTIVE_FAILURES: int(50, 1),
 
     HTTP_RATE_LIMIT_PER_MINUTE: int(300, 1),
+    /** Serve the admin web UI at /ui (its API calls still need an API key). */
+    UI_ENABLED: bool(true),
+    /** Log records and events kept for the admin UI (shared through Redis when STORE_DRIVER=redis). */
+    LOG_BUFFER_SIZE: int(2_000, 0, 100_000),
+    EVENT_BUFFER_SIZE: int(500, 0, 100_000),
     SHUTDOWN_TIMEOUT_MS: int(25_000, 1_000),
 
     /** JSON object overriding arattix Defaults keys, for hot-fixing a moved endpoint without a release. */
@@ -121,19 +126,37 @@ const schema = z
   });
 
 export type Env = z.infer<typeof schema>;
+export type ConfigKey = keyof Env;
+export const CONFIG_KEYS = Object.keys(schema.shape) as ConfigKey[];
 
 export interface Config extends Env {
   dataDir: string;
   spoolDir: string;
   trustProxy: boolean | number | string;
   logFormat: 'json' | 'pretty';
+  /** Raw environment values for the config keys (before overrides), kept to re-validate settings edits. */
+  sourceEnv: Partial<Record<ConfigKey, string>>;
+  /** Settings saved from the admin UI that were applied on top of the environment at startup. */
+  appliedOverrides: Partial<Record<ConfigKey, string>>;
 }
 
-export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(source);
+export class ConfigError extends Error {
+  constructor(readonly issues: Array<{ path: string; message: string }>) {
+    super(`Invalid configuration:\n${issues.map((i) => `  - ${i.path}: ${i.message}`).join('\n')}`);
+    this.name = 'ConfigError';
+  }
+}
+
+/** Parse the environment, with stored admin overrides (if any) taking precedence over it. */
+export function loadConfig(source: NodeJS.ProcessEnv = process.env, overrides: Partial<Record<ConfigKey, string>> = {}): Config {
+  const sourceEnv: Partial<Record<ConfigKey, string>> = {};
+  for (const key of CONFIG_KEYS) {
+    const v = source[key];
+    if (v !== undefined) sourceEnv[key] = v;
+  }
+  const parsed = schema.safeParse({ ...sourceEnv, ...overrides });
   if (!parsed.success) {
-    const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`);
-    throw new Error(`Invalid configuration:\n${lines.join('\n')}`);
+    throw new ConfigError(parsed.error.issues.map((i) => ({ path: i.path.join('.') || '(root)', message: i.message })));
   }
   const env = parsed.data;
   const dataDir = path.resolve(env.DATA_DIR);
@@ -143,6 +166,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     spoolDir: path.join(dataDir, 'spool'),
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     logFormat: env.LOG_FORMAT ?? (env.NODE_ENV === 'production' ? 'json' : 'pretty'),
+    sourceEnv,
+    appliedOverrides: { ...overrides },
   };
 }
 

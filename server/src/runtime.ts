@@ -1,6 +1,8 @@
 import http from 'node:http';
 import path from 'node:path';
 import type { Express } from 'express';
+import { FeedTransport, recordEvents, type EventRecord, type LogRecord } from './activity/activity';
+import { MemoryRecentFeed, RedisRecentFeed, type RecentFeed } from './activity/recent';
 import { Redis } from 'ioredis';
 import { applyEndpointOverrides, ARATTIX_CAPABILITIES, ArattixGateway } from './arattai/arattix-gateway';
 import type { ArattaiGateway } from './arattai/gateway';
@@ -16,6 +18,7 @@ import { startWorkerHandlers } from './jobs/handlers';
 import { FileKeyValueStore, RedisKeyValueStore, type KeyValueStore } from './kv';
 import { createLogger, type Logger } from './logger';
 import { MediaSpool } from './media/spool';
+import { SettingsStore } from './settings';
 import { Metrics } from './metrics';
 import { SendThrottle } from './outbound/throttle';
 import { BullJobQueue } from './queue/bullmq-queue';
@@ -34,6 +37,8 @@ export interface RuntimeOverrides {
   logger?: Logger;
   /** Called when the process must die (lost session lease). Defaults to process.exit(1). */
   onFatal?: (reason: string) => void;
+  /** Called for POST /api/v1/system/restart. Defaults to a SIGTERM to this process. */
+  onRestart?: () => void;
 }
 
 export interface Runtime {
@@ -46,6 +51,9 @@ export interface Runtime {
   status: StatusReader;
   webhooks: WebhookStore;
   spool: MediaSpool;
+  settings: SettingsStore;
+  /** Recent log records and events for the admin UI. */
+  activity: { logs: RecentFeed<LogRecord>; events: RecentFeed<EventRecord> };
   /** Present when this process runs the session (ROLE=all|worker). */
   worker: {
     connection: ConnectionManager;
@@ -103,6 +111,13 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}):
       return [kind, queue];
     }),
   ) as Record<QueueKind, JobQueue>;
+
+  const feed = <T extends object>(name: string, capacity: number): RecentFeed<T> =>
+    config.STORE_DRIVER === 'redis' ? new RedisRecentFeed<T>(redis!, `${redisPrefix}:recent:${name}`, capacity) : new MemoryRecentFeed<T>(capacity);
+  const activity = { logs: feed<LogRecord>('logs', config.LOG_BUFFER_SIZE), events: feed<EventRecord>('events', config.EVENT_BUFFER_SIZE) };
+  if (config.LOG_BUFFER_SIZE > 0) logger.add(new FeedTransport(activity.logs));
+  const settings = new SettingsStore(kv, config, logger);
+  const startedAt = new Date();
 
   const commands = new CommandBus(queues, config.SYNC_WAIT_TIMEOUT_MS);
   const webhooks = new WebhookStore(kv, cipher);
@@ -183,6 +198,7 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}):
       },
     });
     dispatcher.attach();
+    recordEvents(bus, activity.events);
     worker = { connection, gateway, bus, poller, dispatcher, breaker };
   }
 
@@ -206,7 +222,24 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}):
     metrics,
     status,
     checks,
-    ...(runsApi ? { api: { commands, webhooks, spool, capabilities: worker?.gateway.capabilities ?? ARATTIX_CAPABILITIES } } : {}),
+    ...(runsApi
+      ? {
+          api: {
+            commands,
+            webhooks,
+            spool,
+            capabilities: worker?.gateway.capabilities ?? ARATTIX_CAPABILITIES,
+            admin: {
+              logger,
+              logs: activity.logs,
+              events: activity.events,
+              settings,
+              startedAt,
+              restart: overrides.onRestart ?? (() => process.kill(process.pid, 'SIGTERM')),
+            },
+          },
+        }
+      : {}),
   });
 
   let server: http.Server | null = null;
@@ -254,6 +287,8 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}):
     status,
     webhooks,
     spool,
+    settings,
+    activity,
     worker,
     app,
 

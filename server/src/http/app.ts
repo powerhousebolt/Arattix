@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { type Express } from 'express';
 import type { Config } from '../config';
 import { safeEqual } from '../crypto';
@@ -5,6 +6,7 @@ import { Errors } from '../errors';
 import type { Logger } from '../logger';
 import type { Metrics } from '../metrics';
 import type { StatusReader } from '../session/status';
+import { adminRouter, type AdminDeps } from './admin-routes';
 import { accessLog, apiKeyAuth, apiRateLimit, errorHandler, notFound, requestId } from './middleware';
 import { apiRouter, type RouteDeps } from './routes';
 
@@ -16,8 +18,28 @@ export interface AppDeps {
   /** Dependency checks for /health/ready: name → throws when unhealthy. */
   checks: Record<string, () => Promise<void>>;
   /** Omitted for the worker's health/metrics-only listener. */
-  api?: Omit<RouteDeps, 'config' | 'status'>;
+  api?: Omit<RouteDeps, 'config' | 'status'> & { admin: Omit<AdminDeps, 'config' | 'status' | 'commands' | 'capabilities'> };
 }
+
+/** Static admin UI; resolved from src/ (tsx) and dist/ (build) alike. */
+export const UI_DIR = path.join(__dirname, '..', '..', 'public');
+
+/**
+ * The UI shell is public (it holds no data); every call it makes goes to /api/v1 with the
+ * operator's API key. A strict CSP keeps injected markup from running or exfiltrating.
+ */
+const UI_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
 
 export function createApp(deps: AppDeps): Express {
   const { config, logger, metrics } = deps;
@@ -69,7 +91,30 @@ export function createApp(deps: AppDeps): Express {
       apiKeyAuth(config.API_KEYS),
       apiRateLimit(config.HTTP_RATE_LIMIT_PER_MINUTE),
       apiRouter({ ...deps.api, config, status: deps.status }),
+      adminRouter({
+        ...deps.api.admin,
+        config,
+        status: deps.status,
+        commands: deps.api.commands,
+        capabilities: deps.api.capabilities,
+      }),
     );
+
+    if (config.UI_ENABLED) {
+      app.get('/', (_req, res) => res.redirect(302, '/ui/'));
+      app.use(
+        '/ui',
+        (_req, res, next) => {
+          res.setHeader('Content-Security-Policy', UI_CSP);
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          res.setHeader('X-Frame-Options', 'DENY');
+          res.setHeader('Referrer-Policy', 'no-referrer');
+          res.setHeader('Cache-Control', 'no-cache');
+          next();
+        },
+        express.static(UI_DIR, { index: 'index.html', redirect: true, dotfiles: 'ignore' }),
+      );
+    }
   }
 
   app.use(notFound);

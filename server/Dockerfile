@@ -41,6 +41,7 @@ WORKDIR /app/server
 COPY --from=build --chown=node:node /app/server/package.json ./
 COPY --from=build --chown=node:node /app/server/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/server/dist ./dist
+COPY --chown=node:node server/public ./public
 
 RUN mkdir -p /data && chown node:node /data
 VOLUME ["/data"]

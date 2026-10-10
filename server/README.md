@@ -2,13 +2,15 @@
 
 A production REST API around the [arattix](../) library: QR authentication with persistent
 encrypted sessions, paced outbound messaging and media, broadcasts, inbound events delivered as
-signed webhooks, and an operations story (health, metrics, graceful shutdown, failover).
+signed webhooks, an admin web UI, and an operations story (health, metrics, graceful shutdown,
+failover).
 
 > **Read [AUDIT.md](AUDIT.md) first.** arattix is an **HTTP** client (axios + cookie jar), not a
 > browser or WebSocket automation. Inbound events therefore come from **polling**. Group
 > management and reactions have **no verified Arattai endpoint** in the library, so those routes
 > exist but answer `501 CAPABILITY_UNAVAILABLE` until implemented (see AUDIT §4).
 
+* **Admin web UI:** `http://<host>:3000/ui/`, see [Admin web UI](#admin-web-ui)
 * **API reference:** [API_REFERENCE.md](API_REFERENCE.md), with every endpoint, cURL example and response shape
 * **Codebase review and failure domains:** [AUDIT.md](AUDIT.md)
 
@@ -86,6 +88,10 @@ server/
 │   ├── metrics.ts               Prometheus text exporter (no dependency)
 │   ├── kv.ts                    KeyValueStore: Memory | File (atomic, 0600) | Redis (SCAN)
 │   ├── util.ts                  abortable sleep, backoff with jitter, timeouts
+│   ├── settings.ts              settings catalogue; overrides saved from the UI, applied at start
+│   ├── activity/
+│   │   ├── recent.ts            capped log/event feeds: memory, or Redis (shared by all processes)
+│   │   └── activity.ts          Winston transport and event recorder feeding them
 │   ├── arattai/                 ── the upstream boundary ──
 │   │   ├── gateway.ts           ArattaiGateway interface + domain types + capabilities
 │   │   ├── arattix-gateway.ts   implementation over the arattix library; endpoint overrides
@@ -115,10 +121,12 @@ server/
 │   ├── media/spool.ts           upload/download spool with path confinement and sweeper
 │   └── http/
 │       ├── app.ts               health, metrics, /api/v1 mounting, error handling
-│       ├── routes.ts            all REST endpoints
+│       ├── routes.ts            messaging, auth, groups, broadcasts, jobs, webhooks endpoints
+│       ├── admin-routes.ts      system, tasks (list/retry/cancel), logs, events, settings, restart
 │       ├── schemas.ts           Zod request schemas
 │       └── middleware.ts        request id, access log, API keys, rate limit, uploads, errors
-├── test/                        Vitest: unit, lifecycle, webhooks, API, mock-Arattai, Redis
+├── public/                      admin web UI (static, no build step): index.html, app.js, app.css
+├── test/                        Vitest: unit, lifecycle, webhooks, API, admin, mock-Arattai, Redis
 ├── Dockerfile                   multi-stage, non-root, no browser; build from repo root
 ├── docker-compose.yml           Redis + API + worker
 ├── ecosystem.config.cjs         PM2: clustered API + single worker, or single process
@@ -158,6 +166,40 @@ curl -s -X POST localhost:3000/api/v1/messages/send -H "Authorization: Bearer $K
 
 Restart the process: the session is restored from `DATA_DIR` without a new scan.
 
+Or open `http://localhost:3000/ui/`, sign in with the API key and use **Arattai login**.
+
+---
+
+## Admin web UI
+
+The server hosts a browser UI at **`/ui/`** (`/` redirects there). It is static files with no
+data of its own: every page calls `/api/v1` with an API key that the operator types in once and
+that stays in that browser (tab only, or "remember on this device"). Turn it off with
+`UI_ENABLED=false`. Pages are served with a strict Content-Security-Policy (no inline script,
+same-origin only, no framing).
+
+| Page | What you can do |
+|---|---|
+| Dashboard | Session state, worker and circuit, server version/role/uptime/memory, queue counts, capabilities, recent events and warnings |
+| Arattai login | Start a QR login (the QR is shown on the page and refreshes itself), force a new QR, log out, see heartbeat, reconnect and last error |
+| Chats | Browse chats and recent messages, download attachments, reply with text or a file |
+| Send & broadcast | Send text or media (sync or async, TTL, Idempotency-Key), run a broadcast with live progress and per-recipient results; reactions and groups show as unavailable until the library supports them |
+| Tasks | Every queued job across `control`, `outbound`, `broadcast` and `webhooks`: filter by queue, state and name, inspect payload/result/error, **retry** failed jobs, **cancel** waiting ones |
+| Logs | Live tail of server logs (redacted), filter by level, component and text, download as JSON |
+| Events | Live feed of `message.*`, `session.*` and `broadcast.*` events (QR payloads stripped) |
+| Webhooks | Add (secret shown once), test, delete subscriptions; delivery status and failures |
+| Settings | Every setting with its source (env, default, override). Tunables can be edited: they are validated as a whole, stored, and applied at the next start; `LOG_LEVEL` applies immediately. Secrets, topology and `ARATTAI_ENDPOINT_OVERRIDES` stay environment-only. **Restart server** asks the supervisor for a graceful restart |
+
+Logs and events shown in the UI come from capped buffers (`LOG_BUFFER_SIZE`,
+`EVENT_BUFFER_SIZE`). With `STORE_DRIVER=redis` the buffers live in Redis, so an API process
+shows what the session worker logged. Settings saved in the UI are stored in the key-value store
+(`settings:overrides`) and win over the environment; a stored value that no longer validates is
+ignored at boot with an error log, never blocking startup.
+
+**Restart** shuts the process down gracefully and relies on its supervisor (Docker
+`restart: unless-stopped`, PM2, systemd, Kubernetes) to start it again. In a split deployment it
+restarts only the API process that received it; restart the worker too to apply its settings.
+
 ---
 
 ## Configuration
@@ -175,6 +217,10 @@ does not hot-loop on it.
 | Inbound | `POLL_*`, `SELF_USER_ID` |
 | Webhooks | `WEBHOOK_*` (`WEBHOOK_ALLOW_HTTP` / `WEBHOOK_ALLOW_PRIVATE` are for development only) |
 | Hot-fixes | `ARATTAI_ENDPOINT_OVERRIDES`, `ARATTAI_USER_AGENT` |
+| Admin UI | `UI_ENABLED`, `LOG_BUFFER_SIZE`, `EVENT_BUFFER_SIZE` |
+
+Tunables (not secrets or topology) can also be changed from the UI's Settings page or
+`PUT /api/v1/settings`; those stored overrides take precedence over the environment.
 
 ---
 
@@ -386,8 +432,8 @@ failures, or a URL that now resolves to a private address). Fix the receiver, th
 
 ```bash
 cd server
-npm test                                    # 74 tests; the Redis suite is skipped
-REDIS_URL=redis://127.0.0.1:6379 npm test   # all 81 (use a disposable Redis)
+npm test                                    # 88 tests; the Redis suite is skipped
+REDIS_URL=redis://127.0.0.1:6379 npm test   # all 98 (use a disposable Redis)
 npm run typecheck
 ```
 
@@ -397,8 +443,9 @@ npm run typecheck
 | `connection` | full state machine: restore, transient retry, expiry, QR (refresh, timeout, force), heartbeat reconnect/expiry, cookie rotation; poller bootstrap, dedupe, restart resume, self-filter, gap detection |
 | `webhooks` | delivery + signature, 5xx retry, 4xx no-retry, 410 disable, consecutive-failure disable, connect-time private-IP block, sensitive events |
 | `api` | every endpoint through the full runtime: auth, validation, 409/501/413, idempotency, ambiguous timeouts, uploads/downloads and spool cleanup, broadcast, webhooks, health/metrics, restart restore |
+| `admin` | UI hosting and CSP, system overview, task list/retry/cancel, log and event feeds (redaction, filters, cursors), settings validation, live and restart-time application, restart hook |
 | `gateway` | **real arattix library** against a mock Arattai: QR login, CSRF binding, concurrent msgid uniqueness, 11 MB streamed upload, snapshot/restore, expiry on every path, contract drift, circuit, endpoint overrides |
-| `redis` | BullMQ queue semantics and error transport, Redis KV, lease, split API/worker deployment end to end, standby failover |
+| `redis` | BullMQ queue semantics and error transport, job list/retry/cancel, shared log feed, Redis KV, lease, split API/worker deployment end to end (including the worker's logs, events and tasks seen through the API), standby failover |
 
 ## Security notes
 
@@ -412,3 +459,7 @@ npm run typecheck
 * Uploads: size-capped, written to a confined spool with random names, original names sanitised,
   removed after the job's final attempt; orphans are swept.
 * API keys are compared in constant time and logged only as hashes.
+* Admin UI: the static shell holds no data; all reads and actions go through the API key. Strict
+  CSP, `X-Frame-Options: DENY`, no third-party assets. Secrets are never returned by
+  `/api/v1/settings` (only "configured" / masked URLs), and the log feed is redacted twice (logger
+  and feed). Anyone with an API key has full admin rights, including settings and restart.

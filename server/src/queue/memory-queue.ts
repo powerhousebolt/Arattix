@@ -1,7 +1,15 @@
 import crypto from 'node:crypto';
 import { AppError, Errors, toAppError } from '../errors';
 import type { Logger } from '../logger';
-import { JobWaitTimeoutError, type JobCounts, type JobHandler, type JobOptions, type JobQueue, type JobRecord } from './types';
+import {
+  JobWaitTimeoutError,
+  type JobCounts,
+  type JobHandler,
+  type JobOptions,
+  type JobQueue,
+  type JobRecord,
+  type ListableState,
+} from './types';
 
 interface InternalJob {
   record: JobRecord;
@@ -112,6 +120,46 @@ export class MemoryJobQueue implements JobQueue {
       if (record.state in c) c[record.state as keyof JobCounts] += 1;
     }
     return c;
+  }
+
+  async list(states: readonly ListableState[], limit: number): Promise<JobRecord[]> {
+    const wanted = new Set<string>(states);
+    const out: JobRecord[] = [];
+    // Map iteration is insertion order: walk it backwards for newest first.
+    const all = [...this.jobs.values()];
+    for (let i = all.length - 1; i >= 0 && out.length < limit; i -= 1) {
+      const job = all[i]!;
+      if (wanted.has(job.record.state)) out.push({ ...structuredClone(job.record), data: structuredClone(job.data) });
+    }
+    return out;
+  }
+
+  async retry(id: string): Promise<boolean> {
+    const job = this.jobs.get(id);
+    if (!job || job.record.state !== 'failed' || this.closed) return false;
+    const i = this.finished.indexOf(id);
+    if (i >= 0) this.finished.splice(i, 1);
+    job.record.attemptsMade = 0;
+    job.record.finishedAt = null;
+    delete job.record.error;
+    // Keep insertion order meaningful for list(): a retried job is "new" again.
+    this.jobs.delete(id);
+    this.jobs.set(id, job);
+    this.enqueue(job);
+    return true;
+  }
+
+  async cancel(id: string): Promise<boolean> {
+    const job = this.jobs.get(id);
+    if (!job || (job.record.state !== 'waiting' && job.record.state !== 'delayed')) return false;
+    if (job.timer) clearTimeout(job.timer);
+    job.timer = null;
+    const i = this.waiting.indexOf(id);
+    if (i >= 0) this.waiting.splice(i, 1);
+    const e = Errors.cancelled();
+    job.record.error = e.toJSON();
+    for (const w of this.finish(job, 'failed')) w.reject(e);
+    return true;
   }
 
   /** Stop taking work, let active jobs finish, drop timers. Unstarted jobs are lost (logged). */
