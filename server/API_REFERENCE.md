@@ -76,6 +76,7 @@ instead of sending twice. Keys are remembered while the job is retained (24 h fo
 | 410 | `JOB_CANCELLED` | The job was cancelled through `DELETE /jobs/{id}` before it ran | no |
 | 413 | `PAYLOAD_TOO_LARGE` | Upload above `MEDIA_MAX_BYTES`, or JSON above 256 kB | no |
 | 429 | `RATE_LIMITED` | Over `HTTP_RATE_LIMIT_PER_MINUTE` for this API key | after `Retry-After` |
+| 429 | `RATE_LIMITED` | 20 wrong API keys from this client IP within 15 minutes | after `Retry-After` (900 s) |
 | 501 | `CAPABILITY_UNAVAILABLE` | The fork has no verified Arattai endpoint for this (reactions, groups) | no |
 | 502 | `UPSTREAM_REJECTED` | Arattai answered 4xx | no |
 | 502 | `UPSTREAM_ERROR` | Arattai answered 5xx | reads: auto-retried |

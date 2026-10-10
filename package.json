@@ -1,11 +1,12 @@
 {
   "name": "arattix",
   "version": "1.0.0",
-  "description": "Node.js library for Arattai messaging API — send messages, media, and build bots.",
+  "private": true,
+  "description": "Node.js library for Arattai messaging API \u2014 send messages, media, and build bots.",
   "main": "index.js",
   "scripts": {
     "example": "node Example/simple-bot.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm --prefix server test",
     "docker:build": "docker build -t arattix-bot .",
     "docker:run": "docker run -it --rm -v arattix-bot-data:/data arattix-bot",
     "docker:prod": "docker compose up -d bot",
@@ -28,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SafwanGanz/Arattix"
+    "url": "https://github.com/powerhousebolt/Arattix"
   },
   "engines": {
     "node": ">=16.0.0"

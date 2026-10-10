@@ -44,6 +44,15 @@ driving it would race CSRF tokens, double-poll inbound messages and double-deliv
 Redis lease (`session/lease.ts`) guarantees one owner; extra workers wait on standby and take over
 when the owner dies.
 
+**Why Node.js + Express, not Deno + Hono?** Evaluated on 2026-10-10. The library and this server
+already run unmodified on Deno 2.9 (cookie jar, multipart uploads, admin UI and API all worked),
+so compatibility is not the issue; the question is what a migration buys. For one private VPS
+the answer is little: Deno's permission sandbox and built-in TypeScript are real, but the Docker
+image already runs as an unprivileged user with no browser, and `tsc` is a single dev
+dependency. The cost is a rewrite of every Express-coupled piece (routes, auth, rate limiting,
+multer's streaming uploads, the `supertest` suites) plus BullMQ/ioredis on a less-trodden
+runtime, all with no user-visible gain. Node 22 LTS + Express 5 stays.
+
 **Roles** (`ROLE`):
 
 | Role | Runs | Needs | Use |
@@ -226,10 +235,46 @@ Tunables (not secrets or topology) can also be changed from the UI's Settings pa
 
 ## Deployment
 
+### Private VPS (recommended)
+
+One process (`ROLE=all`, file store, in-memory queue) behind Caddy for automatic HTTPS. No Redis
+needed. On a fresh Ubuntu/Debian VPS with Docker installed and a DNS record (here
+`arattix.example.com`) pointing at it:
+
+```bash
+git clone git@github.com:powerhousebolt/Arattix.git && cd Arattix
+cp server/.env.example server/.env
+sed -i "s/^API_KEYS=.*/API_KEYS=$(openssl rand -hex 24)/" server/.env
+sed -i "s/^MASTER_KEY=.*/MASTER_KEY=$(openssl rand -hex 32)/" server/.env
+sed -i "s/^TRUST_PROXY=.*/TRUST_PROXY=1/" server/.env          # Caddy is the one proxy hop
+echo "DOMAIN=arattix.example.com" > .env
+
+sudo ufw allow OpenSSH && sudo ufw allow 80,443/tcp && sudo ufw allow 443/udp && sudo ufw enable
+docker compose --profile server --profile https up -d --build
+docker compose --profile server logs -f server                 # watch it come up
+```
+
+Open `https://arattix.example.com/ui/`, sign in with the key from `API_KEYS` and scan the QR on
+the **Arattai login** page. The server itself listens on `127.0.0.1:3000` only; the internet
+reaches it through Caddy on 443. Without a domain, skip the `https` profile and use an SSH
+tunnel instead: `ssh -L 3000:127.0.0.1:3000 your-vps`, then open `http://localhost:3000/ui/`.
+
+* **Keep safe:** `server/.env` (`MASTER_KEY` decrypts the stored session; losing it means a new
+  QR scan) and the `arattix_server-data` volume (session, webhooks, settings). Back up both:
+  `docker run --rm -v arattix_server-data:/data -v "$PWD:/backup" alpine tar czf /backup/arattix-data.tgz -C /data .`
+* **Update:** `git pull && docker compose --profile server --profile https up -d --build`. The
+  session survives the restart, so no new scan is needed.
+* **Wrong keys:** a client IP that presents 20 wrong API keys within 15 minutes is locked out
+  (429) for the rest of that window. This depends on `TRUST_PROXY=1` above; without it every
+  visitor shares Caddy's IP.
+* **Prebuilt image:** CI pushes `ghcr.io/powerhousebolt/arattix-server` on every push to `main`
+  (private while the repository is). Building on the VPS as above avoids registry credentials.
+
 ### Docker (single process)
 
 With the repository's root `docker-compose.yml` (reads `server/.env`, keeps state in the
-`server-data` volume, publishes `SERVER_PORT`, default 3000):
+`server-data` volume, publishes `SERVER_PORT`, default 3000, on `127.0.0.1` only; set
+`SERVER_BIND=0.0.0.0` in `./.env` to expose it on a private network):
 
 ```bash
 cp server/.env.example server/.env    # set API_KEYS and MASTER_KEY
@@ -254,11 +299,12 @@ Chromium**: the library never needs a browser, which saves ~400 MB and a large a
 ```bash
 cp server/.env.example server/.env    # set API_KEYS and MASTER_KEY
 docker compose -f server/docker-compose.yml up -d --build
-docker compose -f server/docker-compose.yml up -d --scale api=3   # behind a load balancer
 ```
 
-The API and worker share the `spool` volume: uploads land on the API side and are streamed to
-Arattai by the worker.
+The API port is published on `127.0.0.1:3000` with `TRUST_PROXY=1`, for one reverse proxy on the
+same host. To run several API replicas, drop its `ports:` and put the proxy on the compose
+network. The API and worker share the `spool` volume: uploads land on the API side and are
+streamed to Arattai by the worker.
 
 ### PM2 (one host)
 
@@ -458,7 +504,11 @@ npm run typecheck
   (defeats DNS rebinding). Redirects are not followed.
 * Uploads: size-capped, written to a confined spool with random names, original names sanitised,
   removed after the job's final attempt; orphans are swept.
-* API keys are compared in constant time and logged only as hashes.
+* API keys are compared in constant time and logged only as hashes. After 20 rejected keys in 15
+  minutes a client IP gets 429 until the window passes (keyed by `req.ip`, so set `TRUST_PROXY`
+  to match your reverse proxy).
+* The Compose files publish the API on `127.0.0.1` only; expose it through HTTPS (the `https`
+  profile) or a tunnel, never as plain HTTP on a public address.
 * Admin UI: the static shell holds no data; all reads and actions go through the API key. Strict
   CSP, `X-Frame-Options: DENY`, no third-party assets. Secrets are never returned by
   `/api/v1/settings` (only "configured" / masked URLs), and the log feed is redacted twice (logger

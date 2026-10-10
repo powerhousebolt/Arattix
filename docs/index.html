@@ -138,11 +138,9 @@ main();</code></pre>
 
   <!-- Installation -->
   <h2 id="installation">Installation</h2>
-  <div class="install-box">
-    <span class="prompt">$</span> npm install arattix
-  </div>
-  <p>Or clone from GitHub:</p>
-  <pre><code class="language-bash">git clone https://github.com/SafwanGanz/Arattix.git
+  <p><code>arattix</code> is a private repository and is not published to npm. Install it from
+  your clone:</p>
+  <pre><code class="language-bash">git clone git@github.com:powerhousebolt/Arattix.git
 cd Arattix
 npm install</code></pre>
 
@@ -160,7 +158,7 @@ docker compose --profile server up -d --build server</code></pre>
 ├── index.js                 package entry (re-exports src/)
 ├── src/
 │   ├── Socket/              ArattixBot (session + login), Bot (chats, messages, media), MessageSender
-│   ├── auth/                QRLogin, SessionManager, TokenLogin (placeholder)
+│   ├── auth/                QRLogin, SessionManager
 │   ├── Types/               Chat, ChatManager, Message, MediaInfo, Participant
 │   └── Defaults/            endpoint URLs and constants
 ├── Example/                 simple-bot, command-bot, docker-bot

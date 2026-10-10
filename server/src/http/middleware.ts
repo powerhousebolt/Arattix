@@ -93,6 +93,28 @@ export function apiRateLimit(perMinute: number): RequestHandler {
   });
 }
 
+/** Rejected API keys one client IP may present per window before it is locked out. */
+export const AUTH_FAILURE_LIMIT = 20;
+const AUTH_FAILURE_WINDOW_MS = 15 * 60_000;
+
+/**
+ * Stops API key guessing: after AUTH_FAILURE_LIMIT rejected keys from one client IP within
+ * 15 minutes, that IP gets 429 until the window passes. Accepted requests never count.
+ * Runs before apiKeyAuth, keyed by req.ip, so TRUST_PROXY must match the reverse proxy in
+ * front (otherwise every client shares the proxy's IP, or can spoof X-Forwarded-For).
+ */
+export function authFailureLimit(): RequestHandler {
+  return rateLimit({
+    windowMs: AUTH_FAILURE_WINDOW_MS,
+    limit: AUTH_FAILURE_LIMIT,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: (_req, res) => res.statusCode !== 401,
+    handler: (_req, _res, next, options) => next(Errors.rateLimited(options.windowMs)),
+  });
+}
+
 export function uploadSingle(spoolDir: string, maxBytes: number): RequestHandler {
   return multer({
     storage: multer.diskStorage({

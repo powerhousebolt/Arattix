@@ -201,6 +201,7 @@ function verify(secret, header, rawBody) {
   <table>
     <thead><tr><th>Setup</th><th>Command</th><th>When</th></tr></thead>
     <tbody>
+      <tr><td>Private VPS (recommended)</td><td><code>docker compose --profile server --profile https up -d --build</code></td><td>One host, automatic HTTPS for <code>DOMAIN</code>, no Redis</td></tr>
       <tr><td>Single process</td><td><code>docker compose --profile server up -d server</code></td><td>One host, no Redis</td></tr>
       <tr><td>Split (Redis + API + worker)</td><td><code>docker compose -f server/docker-compose.yml up -d --build</code></td><td>Scale the API, survive restarts with queued jobs, worker failover</td></tr>
       <tr><td>PM2</td><td><code>pm2 start server/ecosystem.config.cjs --only arattix-api,arattix-worker</code></td><td>Bare-metal / VM; API in cluster mode, one worker</td></tr>
