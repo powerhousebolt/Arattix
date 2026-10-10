@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>REST API Server — Arattix</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+
+<!-- ════════════════ SIDEBAR ════════════════ -->
+<nav class="site-sidebar">
+  <div class="sidebar-header">
+    <a href="index.html" class="logo">
+      <img class="logo-icon" src="https://e.top4top.io/p_3714329231.png" alt="Arattix">
+      <span class="logo-text">Arattix</span>
+      <span class="logo-version">v1.0.0</span>
+    </a>
+  </div>
+
+  <div class="sidebar-nav">
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Guide</div>
+    </div>
+    <a href="index.html">Introduction</a>
+    <a href="getting-started.html">Getting Started</a>
+    <a href="examples.html">Examples</a>
+    <a href="server.html" class="active">REST API Server</a>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Socket</div>
+    </div>
+    <a href="classes/ArattixBot.html">ArattixBot <span class="badge badge-class">C</span></a>
+    <a href="classes/Bot.html">Bot <span class="badge badge-class">C</span></a>
+    <a href="classes/MessageSender.html">MessageSender <span class="badge badge-class">C</span></a>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Types</div>
+    </div>
+    <a href="classes/Chat.html">Chat <span class="badge badge-class">C</span></a>
+    <a href="classes/ChatManager.html">ChatManager <span class="badge badge-class">C</span></a>
+    <a href="classes/Message.html">Message <span class="badge badge-class">C</span></a>
+    <a href="classes/MediaInfo.html">MediaInfo <span class="badge badge-class">C</span></a>
+    <a href="classes/Participant.html">Participant <span class="badge badge-class">C</span></a>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Other</div>
+    </div>
+    <a href="modules/Defaults.html">Defaults <span class="badge badge-const">D</span></a>
+    <a href="modules/Auth.html">Auth <span class="badge badge-fn">M</span></a>
+  </div>
+</nav>
+
+<!-- ════════════════ CONTENT ════════════════ -->
+<div class="site-content">
+<main class="page-content">
+
+  <h1>REST API Server</h1>
+  <p>
+    <strong>arattix-server</strong> (in <code>server/</code>) wraps the library in a production HTTP API,
+    so any language or system can log in to Arattai, send messages and media, broadcast, and receive
+    inbound messages as signed webhooks, without embedding Node.js.
+  </p>
+
+  <div class="callout">
+    <strong>Full documentation</strong>
+    This page is an overview. The complete guides live next to the code:
+    <a href="https://github.com/powerhousebolt/Arattix/blob/main/server/README.md">server README</a> (architecture, deployment, logging, scaling, runbooks),
+    <a href="https://github.com/powerhousebolt/Arattix/blob/main/server/API_REFERENCE.md">API reference</a> (every endpoint with cURL examples and response shapes) and
+    <a href="https://github.com/powerhousebolt/Arattix/blob/main/server/AUDIT.md">library audit</a> (failure domains and how to handle Arattai changes).
+  </div>
+
+  <h2 id="features">Features</h2>
+  <ul>
+    <li><strong>Persistent sessions</strong>: QR login once; the cookie jar is stored encrypted (AES-256-GCM) and restored on restart.</li>
+    <li><strong>Connection lifecycle</strong>: <code>DISCONNECTED → CONNECTING → QR_READY → AUTHENTICATED → SYNCING → READY</code>, heartbeat, reconnect with backoff, circuit breaker.</li>
+    <li><strong>Paced sending</strong>: queued and throttled (token bucket, per-chat spacing, jitter) to avoid account flagging; <code>Idempotency-Key</code> makes retries safe.</li>
+    <li><strong>Media</strong>: multipart uploads streamed from disk to Arattai; downloads streamed back.</li>
+    <li><strong>Broadcasts</strong>: chunked sends with delays, per-recipient results, no duplicates after a crash.</li>
+    <li><strong>Webhooks</strong>: inbound messages and session events, HMAC-signed (<code>X-Arattai-Signature</code>), retried, SSRF-protected.</li>
+    <li><strong>Operations</strong>: health and Prometheus metrics, JSON logs with secret redaction, Docker, Compose and PM2 configs, worker failover.</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Not available yet</strong>
+    The library has no endpoints for group management or reactions. The server's routes for them are
+    validated but answer <code>501 CAPABILITY_UNAVAILABLE</code>. Inbound messages are discovered by polling,
+    so they arrive a few seconds late.
+  </div>
+
+  <h2 id="quick-start">Quick Start (Docker)</h2>
+  <pre><code class="language-bash">git clone https://github.com/powerhousebolt/Arattix.git
+cd Arattix
+cp server/.env.example server/.env
+# set API_KEYS (openssl rand -hex 24) and MASTER_KEY (openssl rand -hex 32) in server/.env
+docker compose --profile server up -d --build server
+curl -s localhost:3000/health/ready</code></pre>
+
+  <p>Without Docker (Node.js 20.6+):</p>
+  <pre><code class="language-bash">npm install                 # library dependencies (repository root)
+cd server &amp;&amp; npm ci &amp;&amp; npm run build
+cp .env.example .env        # set API_KEYS and MASTER_KEY
+node --env-file=.env dist/index.js</code></pre>
+
+  <h2 id="login">Logging In</h2>
+  <pre><code class="language-bash">KEY=your-api-key
+# Start a QR login; the response contains the QR as text (qr.data) and as a PNG (qr.dataUrl)
+curl -s -X POST localhost:3000/api/v1/auth/session -H "Authorization: Bearer $KEY" \
+  | jq -r '.data.result.qr.dataUrl'
+
+# Scan it with the Arattai app, then:
+curl -s localhost:3000/api/v1/auth/status -H "Authorization: Bearer $KEY" | jq .data.state
+# "READY"</code></pre>
+  <p>
+    The QR code refreshes itself while you wait; poll <code>GET /api/v1/auth/status</code> to show the current one.
+    After a restart the session is restored automatically. A new scan is needed only when Arattai ends the
+    session (<code>state: "DISCONNECTED"</code>, <code>reason: "SESSION_EXPIRED"</code>).
+  </p>
+
+  <h2 id="sending">Sending</h2>
+  <pre><code class="language-bash"># Text
+curl -s -X POST localhost:3000/api/v1/messages/send \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-1042" \
+  -d '{"chatId":"CT_1350000000000000001_123456789","text":"Your order has shipped."}'
+
+# File (streamed; up to 64 MiB by default)
+curl -s -X POST localhost:3000/api/v1/messages/media -H "Authorization: Bearer $KEY" \
+  -F chatId=CT_1350000000000000001_123456789 -F caption="Invoice" -F file=@invoice.pdf
+
+# Broadcast in chunks of 10 with 30 s between chunks
+curl -s -X POST localhost:3000/api/v1/channels/broadcast \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"recipients":["CT_1","CT_2","CT_3"],"text":"Offices closed Monday","chunkSize":10,"chunkDelayMs":30000}'</code></pre>
+  <p>
+    Sends wait up to 25 s for the result (<code>200</code>). If they are still queued, the answer is
+    <code>202</code> with a job id to poll at <code>GET /api/v1/jobs/{id}</code>. Add <code>?async=true</code> to get the
+    <code>202</code> immediately.
+  </p>
+
+  <h2 id="webhooks">Webhooks</h2>
+  <pre><code class="language-bash">curl -s -X POST localhost:3000/api/v1/webhooks/subscribe \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"url":"https://crm.example.com/hooks/arattai","events":["message.received","session.state_changed"]}'
+# The response includes the signing secret (shown only once).</code></pre>
+  <p>Verify each delivery before trusting it:</p>
+  <pre><code class="language-javascript">const crypto = require('node:crypto');
+
+function verify(secret, header, rawBody) {
+  const parts = Object.fromEntries(header.split(',').map((p) =&gt; p.split('=', 2)));
+  const expected = crypto.createHmac('sha256', secret).update(`${parts.t}.${rawBody}`).digest('hex');
+  const fresh = Math.abs(Date.now() / 1000 - Number(parts.t)) &lt;= 300;
+  return fresh &amp;&amp; parts.v1?.length === expected.length &amp;&amp;
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts.v1));
+}</code></pre>
+  <p>
+    Events: <code>message.received</code>, <code>message.sent</code>, <code>message.failed</code>,
+    <code>session.state_changed</code>, <code>session.qr</code> (only when subscribed by name),
+    <code>broadcast.completed</code>, <code>webhook.test</code>.
+  </p>
+
+  <h2 id="endpoints">Endpoints</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>POST</td><td><code>/api/v1/auth/session</code></td><td>Start QR login (<code>{"force": true}</code> to restart)</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/auth/status</code></td><td>Session state, current QR, last error</td></tr>
+      <tr><td>DELETE</td><td><code>/api/v1/auth/session</code></td><td>Log out locally and delete the stored session</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/capabilities</code></td><td>Which operations are supported</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/messages/send</code></td><td>Send text (reactions: 501)</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/messages/media</code></td><td>Upload and send a file (multipart)</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/chats</code></td><td>List chats</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/chats/{chatId}/messages</code></td><td>Recent messages</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/media/{fileId}?chatId=…</code></td><td>Download a file</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/groups/create</code></td><td>Create a group (501 for now)</td></tr>
+      <tr><td>PUT</td><td><code>/api/v1/groups/{id}/members</code></td><td>Add/remove/promote/demote/transfer (501 for now)</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/channels/broadcast</code></td><td>Chunked broadcast</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/channels/broadcast/{id}</code></td><td>Broadcast progress and results</td></tr>
+      <tr><td>GET</td><td><code>/api/v1/jobs/{id}</code></td><td>Any job's state and result</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/webhooks/subscribe</code></td><td>Create a subscription</td></tr>
+      <tr><td>GET / DELETE</td><td><code>/api/v1/webhooks[/{id}]</code></td><td>List, get, unsubscribe</td></tr>
+      <tr><td>POST</td><td><code>/api/v1/webhooks/{id}/test</code></td><td>Send a signed test event</td></tr>
+      <tr><td>GET</td><td><code>/health/live</code>, <code>/health/ready</code>, <code>/metrics</code></td><td>Probes and Prometheus metrics (no API key)</td></tr>
+    </tbody>
+  </table>
+  <p>All <code>/api/v1</code> routes need <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key</code>.</p>
+
+  <h2 id="deployment">Deployment Options</h2>
+  <table>
+    <thead><tr><th>Setup</th><th>Command</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>Single process</td><td><code>docker compose --profile server up -d server</code></td><td>One host, no Redis</td></tr>
+      <tr><td>Split (Redis + API + worker)</td><td><code>docker compose -f server/docker-compose.yml up -d --build</code></td><td>Scale the API, survive restarts with queued jobs, worker failover</td></tr>
+      <tr><td>PM2</td><td><code>pm2 start server/ecosystem.config.cjs --only arattix-api,arattix-worker</code></td><td>Bare-metal / VM; API in cluster mode, one worker</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <strong>One session, one worker</strong>
+    An Arattai account is a single cookie session. Exactly one worker process may own it; a Redis lease
+    enforces that, and extra workers wait on standby. API processes hold no session and can be scaled freely.
+  </div>
+
+  <div class="site-footer">
+    Arattix &copy; 2025 SafwanGanz — MIT License —
+    <a href="https://github.com/SafwanGanz/Arattix">GitHub</a>
+  </div>
+
+</main>
+
+<!-- ════════════════ TABLE OF CONTENTS ════════════════ -->
+<aside class="page-toc">
+  <div class="toc-title">On This Page</div>
+  <a href="#features">Features</a>
+  <a href="#quick-start">Quick Start</a>
+  <a href="#login">Logging In</a>
+  <a href="#sending">Sending</a>
+  <a href="#webhooks">Webhooks</a>
+  <a href="#endpoints">Endpoints</a>
+  <a href="#deployment">Deployment Options</a>
+</aside>
+</div>
+
+<script>hljs.highlightAll();</script>
+<script src="assets/main.js"></script>
+</body>
+</html>

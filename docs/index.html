@@ -27,6 +27,7 @@
     <a href="index.html" class="active">Introduction</a>
     <a href="getting-started.html">Getting Started</a>
     <a href="examples.html">Examples</a>
+    <a href="server.html">REST API Server</a>
 
     <div class="sidebar-section">
       <div class="sidebar-section-title">Socket</div>
@@ -64,7 +65,7 @@
     <div class="hero-badges">
       <img src="https://img.shields.io/npm/v/arattix?color=blue" alt="npm version">
       <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license">
-      <img src="https://img.shields.io/badge/node-%3E%3D14-brightgreen" alt="node >= 14">
+      <img src="https://img.shields.io/badge/node-%3E%3D16-brightgreen" alt="node >= 16">
     </div>
   </div>
 
@@ -105,8 +106,8 @@
       <span>Structured Chat, Message, Participant, and MediaInfo classes for clean data access.</span>
     </li>
     <li>
-      <strong>⚡ Proxy Support</strong>
-      <span>Optional HTTP proxy for running behind firewalls or VPNs.</span>
+      <strong>🌐 REST API Server</strong>
+      <span>Optional HTTP API with webhooks, broadcasts and Docker deployment. See <a href="server.html">REST API Server</a>.</span>
     </li>
   </ul>
 
@@ -145,13 +146,29 @@ main();</code></pre>
 cd Arattix
 npm install</code></pre>
 
-  <p><strong>Docker Support:</strong></p>
-  <pre><code class="language-bash"># Run with Docker
-docker build -t arattix-bot .
-docker run -v $(pwd)/cookies.json:/app/cookies.json arattix-bot
+  <p><strong>Docker:</strong></p>
+  <pre><code class="language-bash"># Example bot; the login is kept in the bot-data volume
+docker compose up -d bot
+docker compose logs -f bot          # scan the QR code once
 
-# Or use Docker Compose
-docker-compose up arattix-bot</code></pre>
+# REST API server (see the REST API Server page)
+docker compose --profile server up -d --build server</code></pre>
+
+  <!-- Project Structure -->
+  <h2 id="structure">Project Structure</h2>
+  <pre><code class="language-text">.
+├── index.js                 package entry (re-exports src/)
+├── src/
+│   ├── Socket/              ArattixBot (session + login), Bot (chats, messages, media), MessageSender
+│   ├── auth/                QRLogin, SessionManager, TokenLogin (placeholder)
+│   ├── Types/               Chat, ChatManager, Message, MediaInfo, Participant
+│   └── Defaults/            endpoint URLs and constants
+├── Example/                 simple-bot, command-bot, docker-bot
+├── server/                  REST API server (TypeScript)
+├── docs/                    this documentation site
+├── Dockerfile               arattix-bot image
+├── Dockerfile.dev           live-reload development image
+└── docker-compose.yml       bot, bot-dev (profile dev), server (profile server)</code></pre>
 
   <!-- Getting Started Overview -->
   <h2 id="getting-started">Getting Started</h2>

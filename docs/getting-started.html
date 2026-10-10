@@ -23,6 +23,7 @@
     <a href="index.html">Introduction</a>
     <a href="getting-started.html" class="active">Getting Started</a>
     <a href="examples.html">Examples</a>
+    <a href="server.html">REST API Server</a>
     <div class="sidebar-section"><div class="sidebar-section-title">Socket</div></div>
     <a href="classes/ArattixBot.html">ArattixBot <span class="badge badge-class">C</span></a>
     <a href="classes/Bot.html">Bot <span class="badge badge-class">C</span></a>
@@ -56,7 +57,7 @@
   <!-- Prerequisites -->
   <h2 id="prerequisites">Prerequisites</h2>
   <ul>
-    <li><strong>Node.js</strong> version 14 or higher</li>
+    <li><strong>Node.js</strong> version 16 or higher (20.6+ for the REST API server)</li>
     <li>An <strong>Arattai account</strong> with the mobile app installed</li>
     <li>A terminal that supports QR code display (most modern terminals do)</li>
   </ul>
@@ -73,30 +74,31 @@ npm install</code></pre>
 
   <!-- Docker Installation -->
   <h2 id="docker-installation">Docker Installation</h2>
-  <p>Run Arattix bots in Docker containers for easy deployment:</p>
-  
-  <h3>Using Docker directly</h3>
-  <pre><code class="language-bash"># Clone and build
-git clone https://github.com/SafwanGanz/Arattix.git
-cd Arattix
-docker build -t arattix-bot .
-
-# Run with mounted volumes for persistence
-docker run -v $(pwd)/cookies.json:/app/cookies.json \
-           -v $(pwd)/downloads:/app/downloads \
-           arattix-bot</code></pre>
+  <p>Run Arattix bots in containers. The image runs as an unprivileged user and keeps the login
+  session (<code>cookies.json</code> and <code>headers.json</code>) in a <code>/data</code> volume.</p>
 
   <h3>Using Docker Compose</h3>
-  <pre><code class="language-bash"># Production environment
-docker-compose up arattix-bot
+  <pre><code class="language-bash">git clone https://github.com/SafwanGanz/Arattix.git
+cd Arattix
 
-# Development with hot reload
-docker-compose --profile dev up arattix-dev</code></pre>
+docker compose up -d bot            # example bot
+docker compose logs -f bot          # scan the QR code printed here, once
+
+docker compose --profile dev up bot-dev   # development: restarts on code changes</code></pre>
+
+  <h3>Using Docker directly</h3>
+  <pre><code class="language-bash">docker build -t arattix-bot .
+docker run -it --rm -v arattix-bot-data:/data arattix-bot
+
+# Run your own script; require('arattix') works inside the container
+docker run -it --rm -v arattix-bot-data:/data \
+  -v "$PWD/bot.js:/app/bots/bot.js:ro" arattix-bot node /app/bots/bot.js</code></pre>
 
   <div class="callout">
-    <strong>Volume Mounting</strong>
-    The Docker setup persists your authentication session in <code>cookies.json</code>
-    and downloaded files in the <code>downloads</code> folder using volume mounts.
+    <strong>Persistence</strong>
+    Use a named volume on <code>/data</code>, not a bind mount of <code>cookies.json</code>: the library also
+    needs <code>headers.json</code>, and Docker turns a missing host file into a directory. With the volume, the
+    session survives <code>docker compose down</code>/<code>up</code>; <code>docker compose down -v</code> removes it.
   </div>
 
   <!-- First Bot -->
@@ -260,13 +262,13 @@ Subsequent runs:
 
   <!-- Proxy -->
   <h2 id="proxy">Using a Proxy</h2>
-  <pre><code class="language-javascript">const arattix = new ArattixBot({
-  isShowQr: true,
-  proxy: 'http://127.0.0.1:8080'
-});
-
-// All requests will go through the proxy
-const bot = await arattix.loginWithQr();</code></pre>
+  <div class="callout warning">
+    <strong>The <code>proxy</code> option does not work yet</strong>
+    Passing <code>proxy</code> to <code>ArattixBot</code> currently throws: the cookie-jar wrapper
+    (<code>axios-cookiejar-support</code>) rejects custom HTTP agents, and <code>https-proxy-agent</code> is not a
+    dependency. Until that is fixed, send the traffic through a proxy at the network level (a VPN, a
+    transparent proxy, or the network your container runs in).
+  </div>
 
   <!-- Next Steps -->
   <h2 id="next-steps">Next Steps</h2>

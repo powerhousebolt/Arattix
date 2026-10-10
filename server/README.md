@@ -182,6 +182,16 @@ does not hot-loop on it.
 
 ### Docker (single process)
 
+With the repository's root `docker-compose.yml` (reads `server/.env`, keeps state in the
+`server-data` volume, publishes `SERVER_PORT`, default 3000):
+
+```bash
+cp server/.env.example server/.env    # set API_KEYS and MASTER_KEY
+docker compose --profile server up -d --build server
+```
+
+Or plain Docker:
+
 ```bash
 docker build -f server/Dockerfile -t arattix-server .          # from the repository root
 docker run -d --name arattix --init -p 3000:3000 \

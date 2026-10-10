@@ -23,6 +23,7 @@
     <a href="index.html">Introduction</a>
     <a href="getting-started.html">Getting Started</a>
     <a href="examples.html" class="active">Examples</a>
+    <a href="server.html">REST API Server</a>
     <div class="sidebar-section"><div class="sidebar-section-title">Socket</div></div>
     <a href="classes/ArattixBot.html">ArattixBot <span class="badge badge-class">C</span></a>
     <a href="classes/Bot.html">Bot <span class="badge badge-class">C</span></a>
@@ -321,11 +322,7 @@ const { ArattixBot } = require('arattix');
 async function main() {
   console.log('🐳 Starting containerized Arattix bot...');
   
-  const arattix = new ArattixBot({ 
-    isShowQr: true,
-    // Use environment variables for configuration
-    proxy: process.env.HTTP_PROXY || null 
-  });
+  const arattix = new ArattixBot({ isShowQr: true });
   
   const bot = await arattix.loginWithQr();
   await bot.setupCsrf();
@@ -362,38 +359,38 @@ async function main() {
 main().catch(console.error);</code></pre>
 
   <h3>Deploy with Docker</h3>
-  <pre><code class="language-bash"># Build the image
-docker build -t my-arattix-bot .
+  <pre><code class="language-bash"># Build the image (from the repository root)
+docker build -t arattix-bot .
 
-# Run with persistence
+# Run your bot; the session and downloads live in the named volume
 docker run -d \
   --name arattix-production \
-  -v $(pwd)/cookies.json:/app/cookies.json \
-  -v $(pwd)/downloads:/app/downloads \
-  -v $(pwd)/my-production-bot.js:/app/my-production-bot.js \
-  -e NODE_ENV=production \
-  my-arattix-bot node my-production-bot.js
+  --restart unless-stopped \
+  -v arattix-bot-data:/data \
+  -v "$PWD/my-production-bot.js:/app/bots/my-production-bot.js:ro" \
+  arattix-bot node /app/bots/my-production-bot.js
 
-# Check logs
+# Scan the QR code once, then follow the logs
 docker logs -f arattix-production</code></pre>
 
   <h3>Using Docker Compose</h3>
   <pre><code class="language-yaml"># docker-compose.override.yml
 services:
-  arattix-bot:
+  bot:
     volumes:
-      - ./my-production-bot.js:/app/my-production-bot.js
-    command: node my-production-bot.js
+      - ./my-production-bot.js:/app/bots/my-production-bot.js:ro
+    command: node /app/bots/my-production-bot.js
     environment:
-      - NODE_ENV=production
-      - BOT_NAME=MyProductionBot</code></pre>
+      BOT_NAME: MyProductionBot</code></pre>
+  <pre><code class="language-bash">docker compose up -d bot</code></pre>
 
   <div class="callout">
     <strong>Production Tips</strong>
-    • Always use volume mounts for <code>cookies.json</code> persistence<br>
+    • Keep the session in a named volume on <code>/data</code>; never bake <code>cookies.json</code> into an image<br>
+    • Paths your bot writes relative to the working directory end up in <code>/data</code><br>
     • Set restart policies with <code>--restart unless-stopped</code><br>
-    • Monitor logs with <code>docker logs</code><br>
-    • Use healthchecks to ensure your bot is responsive
+    • Need an HTTP API, webhooks or several services sending through one account? Use the
+      <a href="server.html">REST API Server</a> instead of a custom bot
   </div>
 
   <div class="site-footer">
