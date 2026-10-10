@@ -1,28 +1,29 @@
-FROM node:18-alpine
+# syntax=docker/dockerfile:1.7
+#
+# Development image: restarts the bot whenever library or example code changes.
+# Use through docker compose (bind-mounts src/, Example/ and index.js):
+#   docker compose --profile dev up bot-dev
+
+ARG NODE_VERSION=22
+FROM node:${NODE_VERSION}-alpine
+
+ENV NODE_ENV=development \
+    NODE_PATH=/app/node_modules
 
 WORKDIR /app
+COPY package.json ./
+RUN npm install --no-audit --no-fund --ignore-scripts
+COPY index.js ./
+COPY src ./src
+COPY Example ./Example
+RUN ln -s /app /app/node_modules/arattix \
+ && mkdir -p /app/bots /data/downloads \
+ && chown -R node:node /data
 
-# Copy package files
-COPY package*.json ./
+WORKDIR /data
+VOLUME ["/data"]
+USER node
 
-# Install all dependencies (including dev)
-RUN npm install
-
-# Install nodemon for hot reload
-RUN npm install -g nodemon
-
-# Copy source code
-COPY . .
-
-# Create downloads directory
-RUN mkdir -p downloads
-
-# Set user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S arattix -u 1001
-RUN chown -R arattix:nodejs /app
-USER arattix
-
-EXPOSE 3000
-
-CMD ["nodemon", "Example/simple-bot.js"]
+# Node's built-in watcher (no nodemon needed). Override BOT_SCRIPT to watch another script.
+ENV BOT_SCRIPT=/app/Example/docker-bot.js
+CMD ["sh", "-c", "exec node --watch-path=/app/src --watch-path=/app/Example --watch-path=/app/bots \"$BOT_SCRIPT\""]

@@ -1,44 +1,87 @@
-version: '3.8'
+# Arattix — Docker Compose entry point (requires Docker Compose v2.24+).
+#
+#   docker compose up -d bot                         # example bot (scan the QR in `docker compose logs -f bot`)
+#   docker compose --profile dev up bot-dev          # bot with live reload of src/ and Example/
+#   docker compose --profile server up -d server     # REST API server, single process (needs server/.env)
+#
+# Split server deployment (Redis + scalable API + session worker): server/docker-compose.yml.
+#
+# Optional settings go in ./.env (bot) and ./server/.env (server; copy server/.env.example).
+
+name: arattix
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: '20m', max-file: '5' }
 
 services:
-  arattix-bot:
+  # ─── Library: example bot ────────────────────────────────────────────
+  bot:
     build: .
-    container_name: arattix-bot
+    image: arattix-bot:latest
+    init: true
     restart: unless-stopped
-    volumes:
-      # Persist session cookies
-      - ./cookies.json:/app/cookies.json
-      # Persist downloads
-      - ./downloads:/app/downloads
-      # Optional: Mount your custom bot script
-      # - ./my-bot.js:/app/my-bot.js
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - NODE_ENV=production
-      - BOT_NAME=Arattix Docker Bot
-      - SHOW_QR=true
-      - POLL_INTERVAL=3000
-      - LOG_LEVEL=info
-    # Uncomment to use .env file
-    # env_file:
-    #   - .env
-    # Uncomment if your bot needs network access
-    # network_mode: host
-    
-  # For development with hot reload
-  arattix-dev:
-    build: 
+      BOT_NAME: ${BOT_NAME:-Arattix Docker Bot}
+      SHOW_QR: ${SHOW_QR:-true}
+      POLL_INTERVAL: ${POLL_INTERVAL:-3000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SEND_STARTUP_MESSAGE: ${SEND_STARTUP_MESSAGE:-false}
+    volumes:
+      # Login session (cookies.json + headers.json) and downloads survive re-creation.
+      - bot-data:/data
+      # Run your own script instead of the example:
+      # - ./my-bot.js:/app/bots/my-bot.js:ro
+    # command: node /app/bots/my-bot.js
+    logging: *logging
+
+  bot-dev:
+    profiles: [dev]
+    build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: arattix-dev
-    volumes:
-      - .:/app
-      - /app/node_modules
+    image: arattix-bot:dev
+    init: true
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - NODE_ENV=development
-      - BOT_NAME=Arattix Dev Bot
-      - LOG_LEVEL=debug
-    # Uncomment to use .env file for development
-    # env_file:
-    #   - .env.development
-    command: nodemon Example/docker-bot.js
-    profiles: ["dev"]
+      BOT_NAME: ${BOT_NAME:-Arattix Dev Bot}
+      LOG_LEVEL: debug
+      # BOT_SCRIPT: /app/Example/simple-bot.js
+    volumes:
+      - ./src:/app/src:ro
+      - ./Example:/app/Example:ro
+      - ./index.js:/app/index.js:ro
+      - bot-dev-data:/data
+    logging: *logging
+
+  # ─── REST API server (single process: API + session worker) ─────────
+  server:
+    profiles: [server]
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: arattix-server:latest
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 35s
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      ROLE: all
+      DATA_DIR: /data
+    ports:
+      - '${SERVER_PORT:-3000}:3000'
+    volumes:
+      - server-data:/data
+    logging: *logging
+
+volumes:
+  bot-data:
+  bot-dev-data:
+  server-data:

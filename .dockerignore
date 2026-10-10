@@ -1,20 +1,36 @@
-# Docker
-node_modules
-npm-debug.log
+# Context for the root Dockerfile / Dockerfile.dev (the server image uses
+# server/Dockerfile.dockerignore, which BuildKit picks up for `-f server/Dockerfile`).
+
+# Dependencies and build output are installed inside the image
+**/node_modules
+**/dist
+**/coverage
+**/.nyc_output
+npm-debug.log*
+
+# Never bake credentials or local state into an image
+cookies.json
+headers.json
+**/.env
+**/.env.*
+downloads
+data
+
+# Not needed by the bot image
+.git
+.github
+docs
+server
 Dockerfile*
 docker-compose*
 .dockerignore
-.git
-.gitignore
 README.md
-.env
-.nyc_output
-coverage
-.nyc_output
-.coverage
-.coverage/
+
+# Editors / OS
 .vscode
 .idea
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
