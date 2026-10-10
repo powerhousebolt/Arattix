@@ -3,6 +3,7 @@
 #   docker compose up -d bot                         # example bot (scan the QR in `docker compose logs -f bot`)
 #   docker compose --profile dev up bot-dev          # bot with live reload of src/ and Example/
 #   docker compose --profile server up -d server     # REST API server, single process (needs server/.env)
+#   docker compose --profile server --profile https up -d   # same, plus automatic HTTPS for DOMAIN
 #
 # Split server deployment (Redis + scalable API + session worker): server/docker-compose.yml.
 #
@@ -76,12 +77,33 @@ services:
       ROLE: all
       DATA_DIR: /data
     ports:
-      - '${SERVER_PORT:-3000}:3000'
+      # Loopback only: reach it through the https service below, an SSH tunnel or your own
+      # reverse proxy. Set SERVER_BIND=0.0.0.0 only on a private network.
+      - '${SERVER_BIND:-127.0.0.1}:${SERVER_PORT:-3000}:3000'
     volumes:
       - server-data:/data
+    logging: *logging
+
+  # ─── HTTPS in front of the server (Caddy, automatic Let's Encrypt) ──
+  # Needs DOMAIN in ./.env pointing at this host, ports 80/443 open, and TRUST_PROXY=1 in
+  # server/.env so the server sees real client IPs.
+  https:
+    profiles: [https]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to server:3000
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - caddy-data:/data
+    depends_on:
+      - server
     logging: *logging
 
 volumes:
   bot-data:
   bot-dev-data:
   server-data:
+  caddy-data:

@@ -2,7 +2,6 @@
 #
 #   cp .env.example .env   # fill in API_KEYS and MASTER_KEY
 #   docker compose -f server/docker-compose.yml up -d --build
-#   docker compose -f server/docker-compose.yml up -d --scale api=3   # behind your load balancer
 #
 # Run from the repository root or pass -f as above; the build context is the repo root.
 
@@ -47,9 +46,11 @@ services:
       QUEUE_DRIVER: bullmq
       STORE_DRIVER: redis
       REDIS_URL: redis://redis:6379
+      # One proxy hop (yours) in front. Keep the port on loopback: if it were public, any
+      # client could spoof X-Forwarded-For and dodge the per-IP limits.
       TRUST_PROXY: '1'
     ports:
-      - '3000:3000'
+      - '127.0.0.1:3000:3000'
 
   worker:
     <<: *app

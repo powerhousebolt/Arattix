@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { classifyUpstreamError } from '../src/arattai/classify';
 import { AppError } from '../src/errors';
+import { AUTH_FAILURE_LIMIT } from '../src/http/middleware';
 import { createSilentLogger } from '../src/logger';
 import { createRuntime, type Runtime } from '../src/runtime';
 import { verifySignature } from '../src/webhooks/signature';
@@ -41,6 +42,20 @@ describe('auth & errors', () => {
     expect(res.body).toEqual({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API key' }, requestId: expect.any(String) });
     await api.get('/api/v1/auth/status').set('X-API-Key', 'wrong-key-wrong-key-wrong').expect(401);
     await api.get('/api/v1/auth/status').set('X-API-Key', API_KEY).expect(200);
+  });
+
+  it('locks out a client IP after repeated wrong API keys; accepted keys never count', async () => {
+    const { api } = await boot();
+    for (let i = 0; i < AUTH_FAILURE_LIMIT + 5; i++) await api.get('/api/v1/auth/status').set(auth).expect(200);
+    for (let i = 0; i < AUTH_FAILURE_LIMIT; i++) {
+      await api.get('/api/v1/auth/status').set('X-API-Key', 'wrong-key-wrong-key-wrong').expect(401);
+    }
+    const locked = await api.get('/api/v1/auth/status').set('X-API-Key', 'wrong-key-wrong-key-wrong').expect(429);
+    expect(locked.body.error.code).toBe('RATE_LIMITED');
+    expect(locked.headers['retry-after']).toBe('900');
+    // The lockout is per IP, so it holds even for a valid key until the window passes.
+    await api.get('/api/v1/auth/status').set(auth).expect(429);
+    await api.get('/health/live').expect(200);
   });
 
   it('returns 404 for unknown routes, 400 for malformed JSON', async () => {

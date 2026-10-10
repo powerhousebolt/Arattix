@@ -229,7 +229,9 @@ function renderLogin(message) {
         apiKey = input.value.trim();
         try {
           const res = await fetch('/api/v1/capabilities', { headers: { Authorization: `Bearer ${apiKey}` } });
-          if (!res.ok) throw new Error(res.status === 401 ? 'That API key was rejected.' : `Server answered ${res.status}`);
+          if (res.status === 401) throw new Error('That API key was rejected.');
+          if (res.status === 429) throw new Error('Too many wrong keys from this address. Try again in 15 minutes.');
+          if (!res.ok) throw new Error(`Server answered ${res.status}`);
           store.set(KEY_STORAGE, apiKey, remember.checked);
           start();
         } catch (err) {

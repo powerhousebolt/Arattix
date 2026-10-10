@@ -7,7 +7,7 @@ import type { Logger } from '../logger';
 import type { Metrics } from '../metrics';
 import type { StatusReader } from '../session/status';
 import { adminRouter, type AdminDeps } from './admin-routes';
-import { accessLog, apiKeyAuth, apiRateLimit, errorHandler, notFound, requestId } from './middleware';
+import { accessLog, apiKeyAuth, apiRateLimit, authFailureLimit, errorHandler, notFound, requestId } from './middleware';
 import { apiRouter, type RouteDeps } from './routes';
 
 export interface AppDeps {
@@ -88,6 +88,7 @@ export function createApp(deps: AppDeps): Express {
   if (deps.api) {
     app.use(
       '/api/v1',
+      authFailureLimit(),
       apiKeyAuth(config.API_KEYS),
       apiRateLimit(config.HTTP_RATE_LIMIT_PER_MINUTE),
       apiRouter({ ...deps.api, config, status: deps.status }),

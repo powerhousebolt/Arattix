@@ -31,11 +31,24 @@ This repository contains:
 
 ## Installation
 
+This is a private repository and `arattix` is **not published to npm** (the root
+`package.json` is marked `"private": true`, so it cannot be published by accident). Work from a
+clone:
+
 ```bash
-npm install arattix
+git clone git@github.com:powerhousebolt/Arattix.git
+cd Arattix
+npm install                 # library dependencies
 ```
 
-Requires Node.js 16 or newer (the REST API server needs Node.js 20.6+).
+To use the library from another project on the same machine, depend on the clone by path:
+
+```bash
+npm install ../Arattix      # adds "arattix": "file:../Arattix" to that project's package.json
+```
+
+Requires Node.js 16 or newer (the REST API server needs Node.js 20.6+). To run the REST API
+server on a VPS, see [Deploy on a VPS](server/README.md#private-vps-recommended).
 
 ## Quick start
 
@@ -145,6 +158,9 @@ curl -s localhost:3000/health/ready
 Then open <http://localhost:3000/ui/>, sign in with one of your `API_KEYS` and scan the QR code
 on the **Arattai login** page.
 
+The port is published on `127.0.0.1` only. On a VPS, add the `https` profile for automatic
+HTTPS on your domain ([Deploy on a VPS](server/README.md#private-vps-recommended)), or reach it
+over an SSH tunnel (`ssh -L 3000:127.0.0.1:3000 your-vps`).
 `SERVER_PORT=8080 docker compose --profile server up -d server` changes the published port.
 For the split deployment (Redis, scalable API processes, one session worker) use
 `docker compose -f server/docker-compose.yml up -d --build`. See
@@ -315,7 +331,7 @@ console.log(Defaults.DOWNLOAD_SERVICE);    // CLIQ
 ├── index.js                 package entry (re-exports src/)
 ├── src/
 │   ├── Socket/              ArattixBot (session + login), Bot (chats, messages, media), MessageSender
-│   ├── auth/                QRLogin, SessionManager, TokenLogin (placeholder)
+│   ├── auth/                QRLogin, SessionManager
 │   ├── Types/               Chat, ChatManager, Message, MediaInfo, Participant
 │   └── Defaults/            endpoint URLs and constants
 ├── Example/                 simple-bot, command-bot, docker-bot
@@ -344,6 +360,7 @@ console.log(Defaults.DOWNLOAD_SERVICE);    // CLIQ
 
 | Script | Does |
 |---|---|
+| `npm test` | run the server test suite (covers the library too) |
 | `npm run example` | run `Example/simple-bot.js` |
 | `npm run docker:build` | build the `arattix-bot` image |
 | `npm run docker:run` | run the bot image interactively with the `arattix-bot-data` volume |
