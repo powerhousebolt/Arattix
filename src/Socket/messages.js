@@ -3,6 +3,18 @@ const path = require('path');
 const mime = require('mime-types');
 const Defaults = require('../Defaults');
 
+let lastMsgId = 0;
+
+/**
+ * Millisecond-timestamp message id that never repeats within this process.
+ * Two sends in the same millisecond would otherwise share a msgid / upload-id.
+ * @returns {number}
+ */
+function nextMsgId() {
+  lastMsgId = Math.max(Date.now(), lastMsgId + 1);
+  return lastMsgId;
+}
+
 /**
  * Sends text messages and files to Arattai chats.
  */
@@ -36,7 +48,7 @@ class MessageSender {
     const data = new URLSearchParams({
       chid: chatId,
       msg: message,
-      msgid: String(Date.now()),
+      msgid: String(nextMsgId()),
       dname: dname || '',
       unfurl: 'true',
     });
@@ -95,6 +107,30 @@ class MessageSender {
   }
 
   /**
+   * Send a readable stream as a file to a chat without buffering it in memory.
+   * @param {import('stream').Readable} stream - The file data.
+   * @param {string} fileName - Display name for the file (e.g. 'photo.jpg').
+   * @param {object} options - { chatId, size, mimeType?, caption?, chat? }.
+   * @param {number} options.size - Exact byte length of the stream (sent as Content-Length).
+   * @returns {Promise<object>} Axios response data.
+   */
+  async sendStream(stream, fileName, { chatId, chat, size, mimeType, caption = '' } = {}) {
+    if (!chatId && !chat) {
+      throw new Error('Please pass either chatId or a Chat object');
+    }
+    if (!Number.isInteger(size) || size < 0) {
+      throw new Error('sendStream requires the exact stream size in bytes');
+    }
+
+    if (chat) {
+      chatId = chat.getChatId();
+    }
+
+    const resolvedMime = mimeType || mime.lookup(fileName) || 'application/octet-stream';
+    return this._uploadBuffer(stream, fileName, resolvedMime, caption, chatId, size);
+  }
+
+  /**
    * Send an image file to a chat.
    * @param {string} filePath - Path to the image file.
    * @param {string} [caption=''] - Caption.
@@ -139,11 +175,11 @@ class MessageSender {
   }
 
   /**
-   * Internal: upload a buffer to the file server.
+   * Internal: upload a buffer (or stream of known length) to the file server.
    * @private
    */
-  async _uploadBuffer(buffer, fileName, mimeType, caption, chatId) {
-    const timestamp = Date.now();
+  async _uploadBuffer(buffer, fileName, mimeType, caption, chatId, contentLength) {
+    const timestamp = nextMsgId();
     const headers = {
       'x-cliq-content-type': mimeType,
       'x-cliq-comment': caption || '',
@@ -156,8 +192,12 @@ class MessageSender {
       'x-client-time-utc': String(timestamp),
       'x-cliq-id': chatId,
     };
+    if (contentLength !== undefined) headers['Content-Length'] = String(contentLength);
 
-    const resp = await this.session.post(Defaults.FILE_UPLOAD_URL, buffer, { headers });
+    const resp = await this.session.post(Defaults.FILE_UPLOAD_URL, buffer, {
+      headers,
+      timeout: Defaults.MEDIA_TIMEOUT,
+    });
     return resp.data;
   }
 }

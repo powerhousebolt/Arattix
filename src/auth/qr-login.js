@@ -7,8 +7,11 @@ const Defaults = require('../Defaults');
 class QRLogin {
   /**
    * @param {import('axios').AxiosInstance} session - Axios instance with cookie jar support.
+   * @param {object} [options]
+   * @param {boolean} [options.showQr=true] - Print the QR code to the terminal.
    */
-  constructor(session) {
+  constructor(session, { showQr = true } = {}) {
+    this.printQr = showQr;
     this.qrGenerateUrl = Defaults.QR_AUTH_URL;
     this.baseUrl = Defaults.WEB_BASE_URL;
     this.session = session;
@@ -72,6 +75,7 @@ class QRLogin {
    * @returns {boolean} Whether the QR code was displayed.
    */
   showQr() {
+    if (!this.printQr) return false;
     if (this.qrResp && this.qrResp.qrcodeauth && this.qrResp.qrcodeauth.token) {
       const qrData = this.qrResp.qrcodeauth.oneauth_url;
       qrcode.generate(qrData, { small: true }, (code) => {
@@ -83,47 +87,63 @@ class QRLogin {
   }
 
   /**
+   * Check the QR code status once.
+   * Requests a new QR code first if none is active.
+   * @returns {Promise<'pending'|'refreshed'|'authenticated'>} 'refreshed' means the previous QR
+   *   code expired and a new one was requested (read it from `qrResp`).
+   */
+  async pollOnce() {
+    if (!this.qrResp || !this.qrResp.qrcodeauth || !this.qrResp.qrcodeauth.token) {
+      await this.requestQrData();
+      return 'refreshed';
+    }
+
+    const params = {
+      cli_time: this.cliTime,
+      servicename: 'AaaServer',
+      serviceurl: this.baseUrl,
+    };
+
+    const token = this.qrResp.qrcodeauth.token;
+    this.session.defaults.headers.common['Z-Authorization'] = 'Zoho-ticket ' + token;
+
+    const resp = await this.session.put(
+      this.qrGenerateUrl,
+      '{"qrcodeauth":{"remember":true}}',
+      {
+        params,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    const statusCode = resp.data.status_code;
+
+    if (statusCode === 401) {
+      await this.requestQrData();
+      return 'refreshed';
+    }
+    if (statusCode === 200) return 'authenticated';
+    return 'pending';
+  }
+
+  /**
    * Poll the server until the QR code is scanned and authenticated.
    * @returns {Promise<boolean>} Whether authentication was successful.
    */
   async validateQr() {
     while (!this.stopFlag) {
-      if (!this.qrResp || !this.qrResp.qrcodeauth || !this.qrResp.qrcodeauth.token) {
-        await this.requestQrData();
+      const result = await this.pollOnce();
+
+      if (result === 'refreshed') {
         this.showQr();
-      } else {
-        const params = {
-          cli_time: this.cliTime,
-          servicename: 'AaaServer',
-          serviceurl: this.baseUrl,
-        };
-
-        const token = this.qrResp.qrcodeauth.token;
-        this.session.defaults.headers.common['Z-Authorization'] = 'Zoho-ticket ' + token;
-
-        const resp = await this.session.put(
-          this.qrGenerateUrl,
-          '{"qrcodeauth":{"remember":true}}',
-          {
-            params,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-
-        const statusCode = resp.data.status_code;
-
-        if (statusCode === 401) {
-          await this.requestQrData();
-          this.showQr();
-        } else if (statusCode === 200) {
-          console.log('Authentication Successful');
-          this.stopFlag = true;
-          return true;
-        }
-
-        // Wait 5 seconds before polling again
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+      } else if (result === 'authenticated') {
+        console.log('Authentication Successful');
+        this.stopFlag = true;
+        return true;
       }
+
+      // Wait 5 seconds before polling again
+      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
     return false;
   }

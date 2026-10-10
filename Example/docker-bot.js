@@ -1,4 +1,4 @@
-const { ArattixBot } = require('./');
+const { ArattixBot } = require('../');
 
 /**
  * Docker Example Bot
@@ -107,8 +107,8 @@ async function pollMessages() {
         await processMessage(msg, chat.chatid);
         
         // Handle media messages
-        if (require('./src/Socket/bot').isMediaMessage(msg)) {
-          const info = require('./src/Socket/bot').getMediaInfo(msg);
+        if (require('../src/Socket/bot').isMediaMessage(msg)) {
+          const info = require('../src/Socket/bot').getMediaInfo(msg);
           log.info(`📁 Media received in ${chat.title}: ${info.fileName}`);
         }
       }

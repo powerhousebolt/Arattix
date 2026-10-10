@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { wrapper } = require('axios-cookiejar-support');
 const { CookieJar } = require('tough-cookie');
-const { QRLogin, SessionManager } = require('../Auth');
+const { QRLogin, SessionManager } = require('../auth');
 const Bot = require('./bot');
 const Defaults = require('../Defaults');
 
@@ -23,6 +23,8 @@ class ArattixBot {
     const axiosConfig = {
       jar,
       withCredentials: true,
+      // Without a timeout a stalled upstream connection hangs the caller forever.
+      timeout: Defaults.DEFAULT_TIMEOUT,
       headers: { common: {} },
     };
 
@@ -48,11 +50,11 @@ class ArattixBot {
       return new Bot(this.session);
     }
 
-    const qr = new QRLogin(this.session);
+    const qr = new QRLogin(this.session, { showQr: this.isShowQr });
     const qrResp = await qr.initiateLogin();
-    await sessionManager.saveSession();
 
     if (qrResp) {
+      await sessionManager.saveSession();
       return new Bot(this.session);
     }
 
