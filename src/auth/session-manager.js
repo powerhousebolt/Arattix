@@ -88,25 +88,21 @@ class SessionManager {
   async testCookies() {
     try {
       await this.loadSession();
-      await this.loadCookies();
     } catch (e) {
       return false;
     }
 
     const url = 'https://web.arattai.in/';
     try {
-      const resp = await this.session.get(url, {
+      await this.session.get(url, {
         timeout: 10000,
         maxRedirects: 0,
-        validateStatus: (status) => status >= 200 && status < 400,
+        // Only 2xx counts as valid: an expired session answers with a 3xx redirect to the login page.
+        validateStatus: (status) => status >= 200 && status < 300,
       });
-      // If no redirect, session is valid
       return true;
     } catch (err) {
       // Redirect (3xx) or error means invalid session
-      if (err.response && err.response.status >= 300 && err.response.status < 400) {
-        return false;
-      }
       return false;
     }
   }

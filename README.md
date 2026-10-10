@@ -47,6 +47,14 @@ node Example/command-bot.js
 ```
 
 
+## REST API server
+
+[`server/`](server/) wraps this library in a production REST API: QR login with encrypted
+session persistence, paced sending, media upload, broadcasts, signed webhooks for inbound
+messages, health/metrics, Docker and PM2 deployment. See [server/README.md](server/README.md),
+[server/API_REFERENCE.md](server/API_REFERENCE.md) and the library review in
+[server/AUDIT.md](server/AUDIT.md).
+
 ## API Reference
 
 ### `ArattixBot`

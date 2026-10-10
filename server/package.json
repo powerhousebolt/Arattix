@@ -1,0 +1,43 @@
+{
+  "name": "arattix-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production REST API server around the arattix library (Arattai automation).",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "arattix": "file:..",
+    "bullmq": "^5.81.5",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.0.0",
+    "ioredis": "^5.11.1",
+    "mime-types": "^2.1.35",
+    "multer": "^2.0.2",
+    "qrcode": "^1.5.4",
+    "winston": "^3.17.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/mime-types": "^2.1.4",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

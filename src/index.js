@@ -2,7 +2,7 @@ const ArattixBot = require('./Socket');
 const Bot = require('./Socket/bot');
 const MessageSender = require('./Socket/messages');
 const { Chat, ChatManager, Message, MediaInfo, Participant } = require('./Types');
-const { QRLogin, SessionManager, TokenLogin } = require('./Auth');
+const { QRLogin, SessionManager, TokenLogin } = require('./auth');
 const Defaults = require('./Defaults');
 
 module.exports = {
