@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ArattaiGateway } from '../arattai/gateway';
+import { sha256Hex } from '../crypto';
 import { AppError, Errors, toAppError } from '../errors';
 import type { EventBus } from '../events/bus';
 import type { Logger } from '../logger';
@@ -170,6 +171,16 @@ async function handleOutbound(deps: WorkerDeps, job: JobContext): Promise<unknow
 
 // ─── broadcast ────────────────────────────────────────────────────────
 
+/**
+ * Deterministic outbound job id for one broadcast recipient. Ids that are already safe stay
+ * readable; others are hashed, because safeId() maps "a.b" and "a_b" to the same id and the
+ * second recipient would silently be deduplicated into the first one's job.
+ */
+export function broadcastChildId(broadcastJobId: string, chatId: string): string {
+  const readable = `${broadcastJobId}-${chatId}`;
+  return safeId(readable) === readable ? readable : `${safeId(broadcastJobId).slice(0, 80)}-h${sha256Hex(chatId).slice(0, 40)}`;
+}
+
 async function handleBroadcast(deps: WorkerDeps, job: JobContext<BroadcastJob>): Promise<BroadcastResult> {
   const { recipients, text, displayName, chunkSize, chunkDelayMs } = job.data;
   const chunks = chunk(recipients, chunkSize);
@@ -202,7 +213,7 @@ async function handleBroadcast(deps: WorkerDeps, job: JobContext<BroadcastJob>):
         const { id } = await deps.queues.outbound.add(
           'message.text',
           { chatId, text, displayName, broadcastId: job.id, expiresAt: Date.now() + deps.messageTtlMs } satisfies SendTextJob,
-          { jobId: safeId(`${job.id}-${chatId}`), attempts: deps.outboundAttempts, backoffMs: deps.outboundBackoffMs },
+          { jobId: broadcastChildId(job.id, chatId), attempts: deps.outboundAttempts, backoffMs: deps.outboundBackoffMs },
         );
         return { chatId, id };
       }),

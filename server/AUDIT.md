@@ -93,19 +93,24 @@ How the server handles it (`server/src/arattai/arattix-gateway.ts`, `session/ses
 | 7 | `src/auth/qr-login.js` | QR polling loop was monolithic: no way to step, observe or cancel it | Unusable from a server (no deadline, prints to stdout) | `pollOnce()` added; `validateQr()` is now a loop over it |
 | 8 | `src/Socket/messages.js` | Uploads buffered whole files in memory | 64 MB upload = 64 MB+ heap per request | `sendStream()` with exact `Content-Length` |
 | 9 | `Example/docker-bot.js` | `require('./')` / `require('./src/...')` from inside `Example/` | The root Docker image's `CMD` crashes on start | Paths fixed |
+| 20 | `src/Defaults` `MESSAGES_API` / `ATTACHMENTS_URL` | Ids were interpolated into the URL path unencoded | A crafted id (`../x`, `a?b`) could point an authenticated request at another path | `encodeURIComponent`; the server also refuses dot-only ids. `test/library.test.js` |
+| 21 | `src/Socket/bot.js` `_parseMediaResponse` | `filename*=UTF-8''na%C3%AFve.png` was returned as `UTF-8` | Wrong download names | RFC 5987 parsing, quoted and bare names. `test/library.test.js` |
+| 22 | `src/Socket/bot.js` `_createFreshSession` | Fresh sessions had no timeout | `fetchChatsLive*` could hang forever | Inherits the session timeout |
+| 23 | `src/auth/session-manager.js` | `cookies.json` / `headers.json` written world-readable (`0644`) | Any local user could read the live login | Written `0600`, older files tightened. `test/library.test.js` |
+| 24 | `Example/docker-bot.js` | Passed `HTTP_PROXY` as `proxy` (throws, see 10); `setInterval` polling overlapped and its rejections were unhandled | Crash on start when `HTTP_PROXY` is set; duplicate command replies; crash on the first network error | No proxy option; sequential polling loop with error handling |
 
 ### Not fixed (out of scope, worked around or documented)
 
 | # | Location | Defect | Impact | Server handling |
 |---|---|---|---|---|
-| 10 | `src/Socket/index.js` | `proxy` option always throws: `axios-cookiejar-support` rejects custom agents, and `https-proxy-agent` is not a dependency | Proxy support is dead code | Proxy not offered; use an egress proxy at the network layer |
+| 10 | `src/Socket/index.js` | `proxy` option cannot work: `axios-cookiejar-support` rejects custom agents | Proxy support was dead code that failed with `Cannot find module 'https-proxy-agent'` | Now fails fast with a clear message; use an egress proxy at the network layer |
 | 11 | `axios-cookiejar-support` | Creates a **new HTTP agent per request**, so no keep-alive | Every call is a fresh TCP + TLS handshake: latency, plus a "new connection" pattern | Request volume is minimised (pacing, bounded polling) |
 | 12 | `Bot.fetchMessages` | Non-JSON body (login page) becomes `[]` | **Expired session looks like "no new messages"** | Gateway calls the endpoint itself and classifies the body |
-| 13 | `ChatManager.parseChatData` | Swallows parse errors (`console.error`) and returns a partial map | Contract drift is invisible | Server uses its own tolerant parser that raises `UPSTREAM_CONTRACT_CHANGED` on envelope drift |
+| 13 | `ChatManager.parseChatData` | Swallows parse errors (`console.error`); one malformed chat used to drop every chat after it | Contract drift is invisible | Bad rows are now skipped one by one; the server uses its own parser that raises `UPSTREAM_CONTRACT_CHANGED` on envelope drift |
 | 14 | `Bot.downloadMedia` | Fallback endpoint hides the primary error | Misleading errors | Accepted; errors are classified from the fallback |
 | 15 | `Bot.fetchChats*` | `_refreshCsrf()` (an extra `GET /`) on **every** call | Doubles request volume | Chat list fetched every `POLL_CHATLIST_EVERY` ticks only |
 | 16 | `Bot.fetchChatsLive*` | Builds a brand-new server session per call | Session churn | Not used by the server |
-| 17 | `SessionManager` | Plaintext `cookies.json` / `headers.json` in CWD | Credential exposure via volumes and backups | Server never uses it; encrypted store instead |
+| 17 | `SessionManager` | Plaintext `cookies.json` / `headers.json` in CWD (now `0600`, see 23) | Credential exposure via volumes and backups | Server never uses it; encrypted store instead |
 | 18 | root `Dockerfile` | `npm ci` without a lockfile (deleted in `8fa1415`) | Image build fails | Server image (`server/Dockerfile`) installs the root with `npm install` |
 | 19 | `Example/*` | Polls every chat every 3 s (30 chats ≈ 10 req/s) | Looks like abuse; risks flagging | Poller fetches at most `POLL_CHATS_PER_TICK` chats per tick |
 

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { Redis } from 'ioredis';
 import type { Logger } from '../logger';
-import { sleep } from '../util';
+import { AbortedError, sleep } from '../util';
 
 const RENEW = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end`;
 const RELEASE = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`;
@@ -46,7 +46,8 @@ export class Lease {
       }
       await sleep(retryMs, signal);
     }
-    throw new Error('Lease acquisition aborted');
+    // AbortedError (not a plain Error): the runtime treats it as a normal shutdown, not a fatal one.
+    throw new AbortedError();
   }
 
   startRenewal(onLost: () => void): void {

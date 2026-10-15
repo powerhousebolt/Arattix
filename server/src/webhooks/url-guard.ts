@@ -19,8 +19,12 @@ for (const [addr, prefix] of [
   blocked.addSubnet(addr, prefix, 'ipv4');
 }
 for (const [addr, prefix] of [
-  ['::', 128],
-  ['::1', 128],
+  // ::, ::1 and the deprecated IPv4-compatible form (::a.b.c.d) of every IPv4 address.
+  ['::', 96],
+  ['100::', 64], // discard-only
+  ['2001::', 32], // Teredo: tunnels to an embedded IPv4 address
+  ['2001:db8::', 32], // documentation
+  ['2002::', 16], // 6to4: tunnels to an embedded IPv4 address
   ['fc00::', 7],
   ['fe80::', 10],
   ['ff00::', 8],

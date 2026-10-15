@@ -261,11 +261,11 @@ Subsequent runs:
   <!-- Proxy -->
   <h2 id="proxy">Using a Proxy</h2>
   <div class="callout warning">
-    <strong>The <code>proxy</code> option does not work yet</strong>
-    Passing <code>proxy</code> to <code>ArattixBot</code> currently throws: the cookie-jar wrapper
-    (<code>axios-cookiejar-support</code>) rejects custom HTTP agents, and <code>https-proxy-agent</code> is not a
-    dependency. Until that is fixed, send the traffic through a proxy at the network level (a VPN, a
-    transparent proxy, or the network your container runs in).
+    <strong>There is no <code>proxy</code> option</strong>
+    Passing <code>proxy</code> to <code>ArattixBot</code> throws a clear error: the cookie-jar wrapper
+    (<code>axios-cookiejar-support</code>) rejects the custom HTTP agents a proxy needs. Send the traffic
+    through a proxy at the network level instead (a VPN, a transparent proxy, or the network your
+    container runs in).
   </div>
 
   <!-- Next Steps -->

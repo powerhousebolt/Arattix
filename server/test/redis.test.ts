@@ -16,6 +16,7 @@ import { BullJobQueue } from '../src/queue/bullmq-queue';
 import { JobWaitTimeoutError } from '../src/queue/types';
 import { createRuntime, type Runtime } from '../src/runtime';
 import { Lease } from '../src/session/lease';
+import { AbortedError } from '../src/util';
 import { readStoredOverrides } from '../src/settings';
 import { API_KEY, tempDir, testConfig, waitUntil } from './helpers/env';
 import { FakeGateway } from './helpers/fake-gateway';
@@ -134,6 +135,16 @@ describe.skipIf(!REDIS_URL)('RedisRecentFeed', () => {
     await reader.clear();
     expect(await reader.list({ limit: 10 })).toEqual([]);
   });
+
+  it('stores entries verbatim: empty objects stay objects, large numbers keep their precision', async () => {
+    const key = `${prefix()}:recent:shape`;
+    const conn = redis();
+    const feed = new RedisRecentFeed<{ meta: object; list: unknown[]; big: number }>(conn, key, 5);
+    await waitUntil(() => conn.status === 'ready');
+    feed.push({ meta: {}, list: [], big: 1_760_000_000_123 });
+    await waitUntil(async () => (await feed.list({ limit: 5 })).length === 1);
+    expect(await feed.list({ limit: 5 })).toEqual([{ meta: {}, list: [], big: 1_760_000_000_123, seq: 1 }]);
+  });
 });
 
 describe.skipIf(!REDIS_URL)('RedisKeyValueStore and Lease', () => {
@@ -161,6 +172,22 @@ describe.skipIf(!REDIS_URL)('RedisKeyValueStore and Lease', () => {
     await waitUntil(() => lost, 2000);
     await a.release();
     expect(await redis().get(key)).toBe('intruder'); // release never deletes someone else's lease
+  });
+
+  it('rejects a standby acquire with AbortedError on shutdown, which the runtime treats as non-fatal', async () => {
+    const key = `${prefix()}:lease`;
+    const owner = new Lease(redis(), key, 5_000, logger);
+    expect(await owner.tryAcquire()).toBe(true);
+    const standby = new Lease(redis(), key, 5_000, logger);
+    // Aborted while sleeping between attempts ...
+    const controller = new AbortController();
+    const waiting = standby.acquire(controller.signal, 20);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    await expect(waiting).rejects.toBeInstanceOf(AbortedError);
+    // ... and aborted between two attempts (the loop condition), which used to throw a plain Error.
+    await expect(standby.acquire(AbortSignal.abort(), 20)).rejects.toBeInstanceOf(AbortedError);
+    await owner.release();
   });
 });
 

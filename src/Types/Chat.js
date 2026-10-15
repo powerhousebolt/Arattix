@@ -76,47 +76,51 @@ class ChatManager {
    * @returns {Object.<string, Chat>} Map of chat ID to Chat instances.
    */
   parseChatData() {
-    try {
-      const chatList = this.chatData.data.chats;
-
-      for (const data of chatList) {
-        const allParticipants = [];
-
-        if (data.recipants) {
-          const recipants =
-            typeof data.recipants === 'string'
-              ? JSON.parse(data.recipants)
-              : data.recipants;
-
-          for (const participant of recipants) {
-            allParticipants.push(new Participant(participant.dname, participant.zuid));
-          }
-        }
-
-        let lastmsguid = null;
-        let msg = null;
-
-        if (data.lastmsginfo && data.lastmsginfo !== '') {
-          const lastmsginfo =
-            typeof data.lastmsginfo === 'string'
-              ? JSON.parse(data.lastmsginfo)
-              : data.lastmsginfo;
-          lastmsguid = lastmsginfo.msguid;
-          msg = new Message(lastmsginfo.msguid, lastmsginfo.msg);
-        }
-
-        const owner = new Participant(data.owner.name, data.owner.id);
-        const title = data.title;
-        const chatId = data.chatid;
-
-        this.chats[chatId] = new Chat(chatId, title, owner, allParticipants, msg, lastmsguid);
-      }
-
-      return this.chats;
-    } catch (err) {
-      console.error('Error parsing chat data:', err);
+    const chatList = this.chatData && this.chatData.data && this.chatData.data.chats;
+    if (!Array.isArray(chatList)) {
+      console.error('Error parsing chat data: expected data.chats to be an array');
       return this.chats;
     }
+
+    for (const data of chatList) {
+      try {
+        const chat = ChatManager.parseChat(data);
+        if (chat) this.chats[chat.chatId] = chat;
+      } catch (err) {
+        // One malformed row must not hide every chat after it.
+        console.error('Error parsing chat data:', err);
+      }
+    }
+
+    return this.chats;
+  }
+
+  /**
+   * Parse one raw chat entry.
+   * @param {object} data - One element of `data.chats`.
+   * @returns {Chat|null} null when the entry has no chat id.
+   */
+  static parseChat(data) {
+    if (!data || !data.chatid) return null;
+
+    const allParticipants = [];
+    if (data.recipants) {
+      const recipants = typeof data.recipants === 'string' ? JSON.parse(data.recipants) : data.recipants;
+      for (const participant of recipants) {
+        allParticipants.push(new Participant(participant.dname, participant.zuid));
+      }
+    }
+
+    let lastmsguid = null;
+    let msg = null;
+    if (data.lastmsginfo && data.lastmsginfo !== '') {
+      const lastmsginfo = typeof data.lastmsginfo === 'string' ? JSON.parse(data.lastmsginfo) : data.lastmsginfo;
+      lastmsguid = lastmsginfo.msguid;
+      msg = new Message(lastmsginfo.msguid, lastmsginfo.msg);
+    }
+
+    const owner = new Participant(data.owner ? data.owner.name : null, data.owner ? data.owner.id : null);
+    return new Chat(data.chatid, data.title, owner, allParticipants, msg, lastmsguid);
   }
 }
 

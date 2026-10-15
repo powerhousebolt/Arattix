@@ -5,7 +5,8 @@ import { parseChatList, parseMessages } from '../src/arattai/normalize';
 import { CircuitBreaker } from '../src/circuit-breaker';
 import { Cipher, parseMasterKey } from '../src/crypto';
 import { AppError, AuthExpiredError, fromWireMessage, toAppError, toWireMessage } from '../src/errors';
-import { createSilentLogger } from '../src/logger';
+import { broadcastChildId } from '../src/jobs/handlers';
+import { createSilentLogger, redact } from '../src/logger';
 import { SendThrottle } from '../src/outbound/throttle';
 import { MemoryJobQueue } from '../src/queue/memory-queue';
 import { JobWaitTimeoutError } from '../src/queue/types';
@@ -174,7 +175,11 @@ describe('webhook URL guard', () => {
     for (const a of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.1', '169.254.169.254', '::1', 'fd00::1', '::ffff:127.0.0.1']) {
       expect(isPrivateAddress(a), a).toBe(true);
     }
-    for (const a of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111']) expect(isPrivateAddress(a), a).toBe(false);
+    // IPv4-compatible, 6to4 and Teredo forms tunnel to an embedded IPv4 address.
+    for (const a of ['::', '::7f00:1', '2002:7f00:1::', '2001:0:7f00:1::', '2001:db8::1', '100::1']) {
+      expect(isPrivateAddress(a), a).toBe(true);
+    }
+    for (const a of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111', '2001:4860:4860::8888']) expect(isPrivateAddress(a), a).toBe(false);
   });
 
   it('rejects http, credentials, local hosts and private literals', () => {
@@ -184,6 +189,36 @@ describe('webhook URL guard', () => {
     expect(() => assertWebhookUrl('https://169.254.169.254/latest', strict)).toThrow(/private/);
     expect(() => assertWebhookUrl('https://[::1]/h', strict)).toThrow(/private/);
     expect(assertWebhookUrl('https://example.com/h', strict).hostname).toBe('example.com');
+  });
+});
+
+describe('log redaction', () => {
+  it('keeps error details (JSON.stringify would print {}) and still redacts secrets', () => {
+    const cause = new Error('socket hang up');
+    const err = new AppError({ status: 502, code: 'UPSTREAM', message: 'boom', details: { token: 't' }, cause });
+    const out = JSON.parse(JSON.stringify(redact({ err, cookie: 'c', nested: { password: 'p' } })));
+    expect(out.err).toMatchObject({
+      name: 'AppError',
+      message: 'boom',
+      code: 'UPSTREAM',
+      status: 502,
+      details: { token: '[REDACTED]' },
+      stack: expect.stringContaining('boom'),
+      cause: { name: 'Error', message: 'socket hang up' },
+    });
+    expect(out.cookie).toBe('[REDACTED]');
+    expect(out.nested.password).toBe('[REDACTED]');
+  });
+});
+
+describe('broadcastChildId', () => {
+  it('is deterministic, readable for safe ids and distinct for ids safeId() would merge', () => {
+    expect(broadcastChildId('42', 'CT_1')).toBe('42-CT_1');
+    expect(broadcastChildId('42', 'a.b')).toBe(broadcastChildId('42', 'a.b'));
+    expect(broadcastChildId('42', 'a.b')).not.toBe(broadcastChildId('42', 'a_b'));
+    expect(broadcastChildId('42', 'a.b')).not.toBe(broadcastChildId('42', 'a:b'));
+    expect(broadcastChildId('42', 'a.b')).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
+    expect(broadcastChildId('42', 'x'.repeat(128))).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
   });
 });
 

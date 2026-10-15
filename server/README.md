@@ -371,7 +371,9 @@ response carries `X-Request-Id` (incoming ids are honoured) for correlation.
 * `GET /health/live`: process is up (liveness).
 * `GET /health/ready`: store, queue and lease checks (readiness); `?requireSession=true`
   additionally requires `READY`.
-* `GET /metrics`: Prometheus text format (protect with `METRICS_TOKEN`). Key series:
+* `GET /metrics`: Prometheus text format. With `METRICS_TOKEN` set it needs
+  `Authorization: Bearer <token>`; without it, only loopback and private-network clients may read
+  it (others get `403 METRICS_FORBIDDEN`), so it never leaks through the public HTTPS proxy. Key series:
   `arattai_session_state{state}`, `arattai_heartbeats_total{result}`,
   `arattai_upstream_errors_total{operation,code}`, `arattai_circuit_open`,
   `arattai_outbound_total{job,result}`, `arattai_inbound_messages_total`,
@@ -478,9 +480,10 @@ failures, or a URL that now resolves to a private address). Fix the receiver, th
 
 ```bash
 cd server
-npm test                                    # 88 tests; the Redis suite is skipped
-REDIS_URL=redis://127.0.0.1:6379 npm test   # all 98 (use a disposable Redis)
+npm test                                    # 95 tests; the Redis suite is skipped
+REDIS_URL=redis://127.0.0.1:6379 npm test   # all 107 (use a disposable Redis)
 npm run typecheck
+npm --prefix .. run test:lib                # library unit tests (node:test)
 ```
 
 | Suite | Covers |

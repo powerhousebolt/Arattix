@@ -62,19 +62,21 @@ export class RedisRecentFeed<T extends object> implements RecentFeed<T> {
   push(entry: T): void {
     if (this.capacity <= 0 || this.redis.status !== 'ready') return;
     const key = this.key;
-    // One round trip: assign the seq and store the entry atomically.
+    // One round trip: assign the seq and store the entry atomically. The seq is spliced into
+    // the JSON text rather than going through cjson, which would turn empty objects (`meta: {}`)
+    // into arrays and round large numbers.
+    const json = JSON.stringify(entry);
+    const fields = json === '{}' ? '' : `${json.slice(1, -1)},`;
     this.redis
       .eval(
         `local seq = redis.call('INCR', KEYS[2])
-         local entry = cjson.decode(ARGV[1])
-         entry['seq'] = seq
-         redis.call('LPUSH', KEYS[1], cjson.encode(entry))
+         redis.call('LPUSH', KEYS[1], '{' .. ARGV[1] .. '"seq":' .. seq .. '}')
          redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]) - 1)
          return seq`,
         2,
         `${key}:list`,
         `${key}:seq`,
-        JSON.stringify(entry),
+        fields,
         String(this.capacity),
       )
       .catch(() => undefined);

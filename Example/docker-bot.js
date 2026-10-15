@@ -1,4 +1,4 @@
-const { ArattixBot } = require('../');
+const { ArattixBot, Bot } = require('../');
 
 /**
  * Docker Example Bot
@@ -13,13 +13,15 @@ const { ArattixBot } = require('../');
 // Configuration from environment variables
 const config = {
   isShowQr: process.env.SHOW_QR !== 'false',
-  pollInterval: parseInt(process.env.POLL_INTERVAL || '3000'),
+  pollInterval: Math.max(500, parseInt(process.env.POLL_INTERVAL || '3000', 10) || 3000),
   botName: process.env.BOT_NAME || 'Docker Bot',
   logLevel: process.env.LOG_LEVEL || 'info'
 };
 
 // Global state
 let bot = null;
+let stopping = false;
+let pollTimer = null;
 const lastSeen = {};
 
 // Logging utility
@@ -107,8 +109,8 @@ async function pollMessages() {
         await processMessage(msg, chat.chatid);
         
         // Handle media messages
-        if (require('../src/Socket/bot').isMediaMessage(msg)) {
-          const info = require('../src/Socket/bot').getMediaInfo(msg);
+        if (Bot.isMediaMessage(msg)) {
+          const info = Bot.getMediaInfo(msg);
           log.info(`📁 Media received in ${chat.title}: ${info.fileName}`);
         }
       }
@@ -123,9 +125,22 @@ async function pollMessages() {
   }
 }
 
+// Poll, then schedule the next poll: a slow poll never overlaps the next one (which would
+// run commands twice), and a failed poll (network, expired session) never crashes the bot.
+async function pollLoop() {
+  try {
+    await pollMessages();
+  } catch (error) {
+    log.error(`Polling failed: ${error.message}`);
+  }
+  if (!stopping) pollTimer = setTimeout(pollLoop, config.pollInterval);
+}
+
 // Graceful shutdown handler
 function gracefulShutdown() {
   log.info('Received shutdown signal, cleaning up...');
+  stopping = true;
+  clearTimeout(pollTimer);
   process.exit(0);
 }
 
@@ -135,11 +150,9 @@ async function main() {
   log.info(`Configuration: ${JSON.stringify(config, null, 2)}`);
 
   try {
-    // Initialize bot
-    const arattix = new ArattixBot({ 
-      isShowQr: config.isShowQr,
-      proxy: process.env.HTTP_PROXY || null
-    });
+    // Initialize bot. (The library has no proxy option: route traffic through a proxy at the
+    // network level if you need one.)
+    const arattix = new ArattixBot({ isShowQr: config.isShowQr });
     
     bot = await arattix.loginWithQr();
     await bot.setupCsrf();
@@ -175,7 +188,7 @@ async function main() {
     }
     
     // Start polling loop
-    setInterval(pollMessages, config.pollInterval);
+    pollTimer = setTimeout(pollLoop, config.pollInterval);
     
   } catch (error) {
     log.error(`Failed to start bot: ${error.message}`);

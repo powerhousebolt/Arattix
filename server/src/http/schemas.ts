@@ -1,13 +1,17 @@
 import { z } from 'zod';
 import { EVENT_TYPES } from '../events/bus';
 
-/** Arattai chat ids are opaque; bound them and refuse characters that never appear in ids. */
+/**
+ * Arattai chat ids are opaque; bound them and refuse characters that never appear in ids.
+ * Ids end up in upstream URL paths, so "." and ".." (path segments) are refused too.
+ */
 const id = z
   .string()
   .trim()
   .min(1)
   .max(128)
-  .regex(/^[A-Za-z0-9_.:@-]+$/, 'must contain only letters, digits and _ . : @ -');
+  .regex(/^[A-Za-z0-9_.:@-]+$/, 'must contain only letters, digits and _ . : @ -')
+  .refine((v) => !/^\.+$/.test(v), 'must not consist of dots only');
 
 const displayName = z.string().trim().min(1).max(100);
 const ttlSeconds = z.coerce.number().int().min(5).max(24 * 60 * 60);
