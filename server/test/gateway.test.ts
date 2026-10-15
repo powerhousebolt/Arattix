@@ -39,6 +39,11 @@ function cookie(req: http.IncomingMessage, name: string): string | undefined {
 function handle(req: http.IncomingMessage, res: http.ServerResponse, body: Buffer) {
   const url = new URL(req.url!, base);
   const p = url.pathname;
+  // Like Arattai: a request that still carries the one-time QR ticket outside the QR poll is rejected.
+  if (req.headers['z-authorization'] && !(p === '/accounts/signin/v2/qrcode' && req.method === 'PUT')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'stale ticket' }));
+  }
   const authed = mock.validSessions.has(cookie(req, 'sess') ?? '');
   const json = (status: number, data: unknown, headers: Record<string, string | string[]> = {}) => {
     res.writeHead(status, { 'Content-Type': 'application/json', ...headers });

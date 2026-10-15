@@ -111,3 +111,145 @@ describe('SessionManager', () => {
     }
   });
 });
+
+// ─── Login flow against a local mock of Arattai ─────────────────────────────
+// The mock rejects (HTTP 400) any request that still carries the one-time QR ticket after the
+// QR poll that it belongs to. That is the failure reported from Docker: after scanning, every
+// start died with "Request failed with status code 400" before printing a new QR code.
+describe('QR login and session restore', () => {
+  const http = require('node:http');
+  const crypto = require('node:crypto');
+  const { before, after, beforeEach } = require('node:test');
+
+  const state = { valid: new Set(), qrRequests: 0, ticketRejections: 0 };
+  const saved = { ...Defaults };
+  let server;
+  let base;
+  let dir;
+  let cwd;
+
+  const cookieOf = (req, name) =>
+    (req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).find(([k]) => k === name)?.[1];
+
+  before(async () => {
+    server = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        const url = new URL(req.url, base);
+        const json = (status, body, headers = {}) => {
+          res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+          res.end(JSON.stringify(body));
+        };
+        const isQrPoll = url.pathname === '/accounts/signin/v2/qrcode' && req.method === 'PUT';
+        if (req.headers['z-authorization'] && !isQrPoll) {
+          state.ticketRejections += 1;
+          return json(400, { error: 'stale ticket' });
+        }
+        const authed = state.valid.has(cookieOf(req, 'sess'));
+
+        if (url.pathname === '/accounts') {
+          res.writeHead(200, { 'Set-Cookie': 'iamcsr=csr1; Path=/' });
+          return res.end('accounts');
+        }
+        if (url.pathname === '/accounts/signin') {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          return res.end('<html>sign in</html>');
+        }
+        if (url.pathname === '/accounts/signin/v2/qrcode' && req.method === 'POST') {
+          if (req.headers['x-zcsrf-token'] !== 'iamcsrcoo=csr1') return json(400, { error: 'csrf' });
+          state.qrRequests += 1;
+          return json(200, { qrcodeauth: { token: 'tok1', oneauth_url: 'https://oneauth.example/abc' } });
+        }
+        if (isQrPoll) {
+          if (req.headers['z-authorization'] !== 'Zoho-ticket tok1') return json(200, { status_code: 401 });
+          const sess = crypto.randomBytes(6).toString('hex');
+          state.valid.add(sess);
+          return json(200, { status_code: 200 }, { 'Set-Cookie': `sess=${sess}; Path=/` });
+        }
+        if (url.pathname === '/web/') {
+          if (!authed) {
+            res.writeHead(302, { Location: `${base}/accounts/signin` });
+            return res.end();
+          }
+          res.writeHead(200, { 'Set-Cookie': 'CT_CSRF_TOKEN=csrf-web; Path=/', 'Content-Type': 'text/html' });
+          return res.end('<html>app</html>');
+        }
+        if (url.pathname === '/web/v1/chats') {
+          if (!authed) return json(401, { error: 'login' });
+          return json(200, { data: { chats: [{ chatid: 'CT_1', title: 'Team', owner: { name: 'Bob', id: '7' } }] } });
+        }
+        json(404, { error: 'not found' });
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${server.address().port}`;
+    Object.assign(Defaults, {
+      WEB_BASE_URL: `${base}/web`,
+      ACCOUNTS_BASE_URL: `${base}/accounts`,
+      CHAT_API: `${base}/web/v1/chats`,
+      QR_AUTH_URL: `${base}/accounts/signin/v2/qrcode`,
+    });
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arattix-login-'));
+    cwd = process.cwd();
+    process.chdir(dir);
+  });
+
+  after(async () => {
+    process.chdir(cwd);
+    fs.rmSync(dir, { recursive: true, force: true });
+    Object.assign(Defaults, saved);
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  beforeEach(() => {
+    state.qrRequests = 0;
+    state.ticketRejections = 0;
+  });
+
+  const quietly = async (fn) => {
+    const original = console.log;
+    console.log = () => {};
+    try {
+      return await fn();
+    } finally {
+      console.log = original;
+    }
+  };
+
+  it('logs in by QR, sets up CSRF and never saves the one-time QR ticket', async () => {
+    const bot = await quietly(() => new ArattixBot({ isShowQr: false }).loginWithQr());
+    await bot.setupCsrf();
+    const chats = await bot.fetchChatsRaw({ limit: 5 });
+    assert.equal(chats.data.chats[0].chatid, 'CT_1');
+    assert.equal(state.qrRequests, 1);
+    assert.equal(state.ticketRejections, 0);
+
+    const headers = JSON.parse(fs.readFileSync('headers.json', 'utf-8'));
+    const keys = Object.keys(headers).map((k) => k.toLowerCase());
+    assert.ok(!keys.includes('z-authorization'), 'QR ticket must not be persisted');
+    assert.ok(!String(headers['X-ZCSRF-TOKEN'] || '').startsWith('iamcsrcoo='), 'login-only CSRF header must not be persisted');
+  });
+
+  it('restores the session without a new QR even if headers.json still holds an old ticket', async () => {
+    // headers.json as written by earlier versions: ticket and accounts CSRF header included.
+    fs.writeFileSync(
+      'headers.json',
+      JSON.stringify({ 'User-Agent': 'x', 'X-ZCSRF-TOKEN': 'iamcsrcoo=csr1', 'Z-Authorization': 'Zoho-ticket tok1' }),
+    );
+    const bot = await quietly(() => new ArattixBot({ isShowQr: false }).loginWithQr());
+    await bot.setupCsrf();
+    await bot.fetchChatsRaw({ limit: 5 });
+    assert.equal(state.qrRequests, 0, 'a valid stored session needs no new QR');
+    assert.equal(state.ticketRejections, 0);
+  });
+
+  it('starts a clean QR login when the stored session has expired', async () => {
+    state.valid.clear(); // Arattai ended the session
+    fs.writeFileSync('headers.json', JSON.stringify({ 'Z-Authorization': 'Zoho-ticket tok1' }));
+    const bot = await quietly(() => new ArattixBot({ isShowQr: false }).loginWithQr());
+    await bot.setupCsrf();
+    await bot.fetchChatsRaw({ limit: 5 });
+    assert.equal(state.qrRequests, 1);
+    assert.equal(state.ticketRejections, 0);
+  });
+});

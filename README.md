@@ -123,6 +123,14 @@ docker build -t arattix-bot .
 docker run -it --rm -v arattix-bot-data:/data arattix-bot
 ```
 
+**"Failed to start bot: Request failed with status code 400" right after scanning.** Older
+versions kept the one-time QR ticket as a default request header and saved it to
+`headers.json`; Arattai rejects later requests that carry it. Rebuild with the current code
+(`docker compose up -d --build bot`): stale entries in an existing `headers.json` are ignored,
+and an expired session falls back to a fresh QR login. If it still fails, the error line now
+names the request and Arattai's answer. `docker compose down -v` removes the stored session
+for a completely clean start.
+
 ### Run your own bot script
 
 `require('arattix')` works from any path inside the container:

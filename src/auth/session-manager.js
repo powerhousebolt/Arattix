@@ -18,6 +18,25 @@ function writePrivateFile(filename, contents) {
   }
 }
 
+/**
+ * Drop headers that belong to a single QR login and must never be saved or restored: the
+ * one-time QR ticket (Z-Authorization) and the accounts-server CSRF header
+ * (X-ZCSRF-TOKEN: iamcsrcoo=…). headers.json files written by earlier versions contain both;
+ * sending them again made Arattai reject requests with HTTP 400.
+ * @param {object} headers
+ * @returns {object}
+ */
+function withoutLoginHeaders(headers) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers || {})) {
+    const name = key.toLowerCase();
+    if (name === 'z-authorization') continue;
+    if (name === 'x-zcsrf-token' && String(value).startsWith('iamcsrcoo=')) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 class SessionManager {
   /**
    * Manages session persistence (cookies + headers) to/from disk.
@@ -42,7 +61,7 @@ class SessionManager {
    * @param {string} filename - Path to save headers.
    */
   saveHeaders(filename = 'headers.json') {
-    const headers = { ...this.session.defaults.headers.common };
+    const headers = withoutLoginHeaders(this.session.defaults.headers.common);
     writePrivateFile(filename, JSON.stringify(headers, null, 2));
   }
 
@@ -76,7 +95,19 @@ class SessionManager {
     if (!fs.existsSync(filename)) throw new Error(`Headers file not found: ${filename}`);
 
     const headers = JSON.parse(fs.readFileSync(filename, 'utf-8'));
-    Object.assign(this.session.defaults.headers.common, headers);
+    Object.assign(this.session.defaults.headers.common, withoutLoginHeaders(headers));
+  }
+
+  /**
+   * Forget everything loaded into the session (cookies and login headers), so a new QR login
+   * starts from a clean slate instead of sending a rejected session's cookies along.
+   */
+  reset() {
+    this.session.defaults.jar = new CookieJar();
+    const common = this.session.defaults.headers.common;
+    for (const key of Object.keys(common)) {
+      if (['z-authorization', 'x-zcsrf-token'].includes(key.toLowerCase())) delete common[key];
+    }
   }
 
   /**

@@ -32,6 +32,22 @@ const log = {
   debug: (msg) => config.logLevel === 'debug' && console.log(`🐛 ${msg}`)
 };
 
+// "Request failed with status code 400" alone does not say which call failed: add the
+// request and the start of Arattai's answer.
+function describeError(error) {
+  const parts = [error.message];
+  const request = error.config;
+  if (request && request.url) {
+    parts.push(`${String(request.method || 'get').toUpperCase()} ${request.url.split('?')[0]}`);
+  }
+  const data = error.response && error.response.data;
+  if (data !== undefined && data !== null && data !== '') {
+    const body = Buffer.isBuffer(data) ? data.toString('utf8') : typeof data === 'string' ? data : JSON.stringify(data);
+    parts.push(`response: ${body.replace(/\s+/g, ' ').slice(0, 200)}`);
+  }
+  return parts.join(' | ');
+}
+
 // Command handlers
 const commands = {
   ping: async (msg, chatId) => {
@@ -87,7 +103,7 @@ async function processMessage(msg, chatId) {
       log.debug(`Executing command: ${command} in chat ${chatId}`);
       await commands[command](msg, chatId);
     } catch (error) {
-      log.error(`Command ${command} failed: ${error.message}`);
+      log.error(`Command ${command} failed: ${describeError(error)}`);
     }
   }
 }
@@ -131,7 +147,7 @@ async function pollLoop() {
   try {
     await pollMessages();
   } catch (error) {
-    log.error(`Polling failed: ${error.message}`);
+    log.error(`Polling failed: ${describeError(error)}`);
   }
   if (!stopping) pollTimer = setTimeout(pollLoop, config.pollInterval);
 }
@@ -191,7 +207,7 @@ async function main() {
     pollTimer = setTimeout(pollLoop, config.pollInterval);
     
   } catch (error) {
-    log.error(`Failed to start bot: ${error.message}`);
+    log.error(`Failed to start bot: ${describeError(error)}`);
     process.exit(1);
   }
 }
@@ -202,6 +218,6 @@ process.on('SIGTERM', gracefulShutdown);
 
 // Start the bot
 main().catch(error => {
-  log.error(`Unhandled error: ${error.message}`);
+  log.error(`Unhandled error: ${describeError(error)}`);
   process.exit(1);
 });
