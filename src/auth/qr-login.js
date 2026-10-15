@@ -17,6 +17,7 @@ class QRLogin {
     this.session = session;
     this.stopFlag = false;
     this.qrResp = null;
+    this.csrfHeader = '';
     this.cliTime = Date.now();
   }
 
@@ -58,12 +59,14 @@ class QRLogin {
     const csrfCookie = cookies.find((c) => c.key === 'iamcsr');
     const csrfToken = csrfCookie ? csrfCookie.value : '';
 
-    this.session.defaults.headers.common['X-ZCSRF-TOKEN'] = 'iamcsrcoo=' + csrfToken;
+    // Accounts-server CSRF header: only the QR requests need it, so it is sent per request
+    // instead of being left on the session for every later call.
+    this.csrfHeader = 'iamcsrcoo=' + csrfToken;
     this.session.defaults.headers.common['User-Agent'] = Defaults.DEFAULT_USER_AGENT;
 
     const resp = await this.session.post(this.qrGenerateUrl, '{"qrcodeauth":{"remember":true}}', {
       params,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-ZCSRF-TOKEN': this.csrfHeader },
     });
 
     this.qrResp = resp.data;
@@ -104,15 +107,21 @@ class QRLogin {
       serviceurl: this.baseUrl,
     };
 
+    // The QR ticket authorises this status poll only. It used to be set as a session-wide
+    // default, so it leaked into every later request and into headers.json, and Arattai
+    // answered those requests with HTTP 400.
     const token = this.qrResp.qrcodeauth.token;
-    this.session.defaults.headers.common['Z-Authorization'] = 'Zoho-ticket ' + token;
 
     const resp = await this.session.put(
       this.qrGenerateUrl,
       '{"qrcodeauth":{"remember":true}}',
       {
         params,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-ZCSRF-TOKEN': this.csrfHeader,
+          'Z-Authorization': 'Zoho-ticket ' + token,
+        },
       }
     );
 

@@ -277,9 +277,10 @@ class Bot {
 
   /** @private */
   async _refreshCsrf() {
+    // A leftover QR ticket must not reach the web app (it answers such requests with 400).
+    delete this.session.defaults.headers.common['Z-Authorization'];
     await this.session.get(Defaults.WEB_BASE_URL + '/');
     this.session.defaults.headers.common['X-ZCSRF-TOKEN'] = await Bot._csrfHeader(this.session.defaults.jar);
-    delete this.session.defaults.headers.common['Z-Authorization'];
   }
 
   /**

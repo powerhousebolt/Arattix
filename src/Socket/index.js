@@ -52,6 +52,9 @@ class ArattixBot {
       return new Bot(this.session);
     }
 
+    // The stored session (if any) was rejected: don't carry its cookies and headers into
+    // the new login.
+    sessionManager.reset();
     const qr = new QRLogin(this.session, { showQr: this.isShowQr });
     const qrResp = await qr.initiateLogin();
 
