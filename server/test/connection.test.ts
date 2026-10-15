@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CircuitBreaker } from '../src/circuit-breaker';
 import { Cipher } from '../src/crypto';
 import { AppError, AuthExpiredError } from '../src/errors';
@@ -297,6 +297,30 @@ describe('InboundPoller', () => {
     const got = events.filter((e) => e.type === 'message.received');
     expect(got.map((e) => (e.data as { message: { id: string } }).message.id)).toEqual(['3', '4', '5']);
     expect((got[0]!.data as { gapDetected: boolean }).gapDetected).toBe(true);
+  });
+
+  it('keeps a single polling loop when the session drops and returns mid-tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const { gateway, poller } = await readyPoller();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      gateway.listChatsImpl = async () => {
+        await gate;
+        return [chat('A', 'v1')];
+      };
+      poller.start();
+      await vi.advanceTimersByTimeAsync(60_000); // first tick starts and blocks on the chat list
+      poller.stop(); // session left READY ...
+      poller.start(); // ... and came back before the tick finished
+      expect(vi.getTimerCount()).toBe(1);
+      release();
+      await vi.advanceTimersByTimeAsync(0); // the stale tick finishes
+      expect(vi.getTimerCount()).toBe(1); // it must not schedule a second loop
+      poller.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports auth failures to the connection manager instead of swallowing them', async () => {

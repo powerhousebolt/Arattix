@@ -26,13 +26,7 @@ class Bot {
    * Call this once after login before using other API methods.
    */
   async setupCsrf() {
-    await this.session.get(Defaults.WEB_BASE_URL + '/');
-    const jar = this.session.defaults.jar;
-    const cookies = await jar.getCookies(Defaults.WEB_BASE_URL);
-    const csrfCookie = cookies.find((c) => c.key === 'CT_CSRF_TOKEN');
-    const csrfToken = csrfCookie ? csrfCookie.value : '';
-    this.session.defaults.headers.common['X-ZCSRF-TOKEN'] = 'zchat_csrparam=' + csrfToken;
-    delete this.session.defaults.headers.common['Z-Authorization'];
+    await this._refreshCsrf();
   }
 
   // ─── MESSAGE SENDER ────────────────────────────────────────────────
@@ -284,12 +278,18 @@ class Bot {
   /** @private */
   async _refreshCsrf() {
     await this.session.get(Defaults.WEB_BASE_URL + '/');
-    const jar = this.session.defaults.jar;
+    this.session.defaults.headers.common['X-ZCSRF-TOKEN'] = await Bot._csrfHeader(this.session.defaults.jar);
+    delete this.session.defaults.headers.common['Z-Authorization'];
+  }
+
+  /**
+   * Build the web-app CSRF header value from the CT_CSRF_TOKEN cookie.
+   * @private
+   */
+  static async _csrfHeader(jar) {
     const cookies = await jar.getCookies(Defaults.WEB_BASE_URL);
     const csrfCookie = cookies.find((c) => c.key === 'CT_CSRF_TOKEN');
-    const csrfToken = csrfCookie ? csrfCookie.value : '';
-    this.session.defaults.headers.common['X-ZCSRF-TOKEN'] = 'zchat_csrparam=' + csrfToken;
-    delete this.session.defaults.headers.common['Z-Authorization'];
+    return 'zchat_csrparam=' + (csrfCookie ? csrfCookie.value : '');
   }
 
   /** @private */
@@ -310,6 +310,8 @@ class Bot {
     const freshSession = wrapper(axios.create({
       jar: freshJar,
       withCredentials: true,
+      // Same bound as the main session: a stalled connection must not hang the caller.
+      timeout: this.session.defaults.timeout || Defaults.DEFAULT_TIMEOUT,
       headers: {
         common: {
           'User-Agent': this.session.defaults.headers.common['User-Agent'] || Defaults.DEFAULT_USER_AGENT,
@@ -318,11 +320,7 @@ class Bot {
     }));
 
     await freshSession.get(Defaults.WEB_BASE_URL + '/');
-
-    const freshCookies = await freshJar.getCookies(Defaults.WEB_BASE_URL);
-    const csrfCookie = freshCookies.find((c) => c.key === 'CT_CSRF_TOKEN');
-    const csrfToken = csrfCookie ? csrfCookie.value : '';
-    freshSession.defaults.headers.common['X-ZCSRF-TOKEN'] = 'zchat_csrparam=' + csrfToken;
+    freshSession.defaults.headers.common['X-ZCSRF-TOKEN'] = await Bot._csrfHeader(freshJar);
 
     return freshSession;
   }
@@ -330,14 +328,39 @@ class Bot {
   /** @private */
   _parseMediaResponse(resp) {
     const contentType = resp.headers['content-type'] || 'application/octet-stream';
-    const disposition = resp.headers['content-disposition'] || '';
-    const fileNameMatch = disposition.match(/filename[*]?=["']?([^"';\n]+)/);
     return {
       data: Buffer.from(resp.data),
       contentType,
-      fileName: fileNameMatch ? fileNameMatch[1] : null,
+      fileName: parseContentDispositionFileName(resp.headers['content-disposition']),
     };
   }
 }
+
+/**
+ * File name from a Content-Disposition header. Prefers the RFC 5987 `filename*=UTF-8''...` form
+ * (percent-decoded) over the plain `filename="..."` one. Returns null when there is neither.
+ * @param {string|undefined} disposition
+ * @returns {string|null}
+ */
+function parseContentDispositionFileName(disposition) {
+  if (!disposition) return null;
+  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(disposition);
+  if (extended) {
+    const value = extended[2].trim().replace(/^"|"$/g, '');
+    try {
+      if (/^utf-?8$/i.test(extended[1])) return decodeURIComponent(value);
+      // ISO-8859-1: each %XX is one code point.
+      return value.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    } catch (err) {
+      return value;
+    }
+  }
+  const plain = /filename\s*=\s*(?:"([^"]*)"|([^;]+))/i.exec(disposition);
+  if (!plain) return null;
+  const name = (plain[1] !== undefined ? plain[1] : plain[2]).trim();
+  return name || null;
+}
+
+Bot.parseContentDispositionFileName = parseContentDispositionFileName;
 
 module.exports = Bot;

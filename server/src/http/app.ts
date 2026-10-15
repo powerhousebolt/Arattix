@@ -2,10 +2,11 @@ import path from 'node:path';
 import express, { type Express } from 'express';
 import type { Config } from '../config';
 import { safeEqual } from '../crypto';
-import { Errors } from '../errors';
+import { AppError, Errors } from '../errors';
 import type { Logger } from '../logger';
 import type { Metrics } from '../metrics';
 import type { StatusReader } from '../session/status';
+import { isPrivateAddress } from '../webhooks/url-guard';
 import { adminRouter, type AdminDeps } from './admin-routes';
 import { accessLog, apiKeyAuth, apiRateLimit, authFailureLimit, errorHandler, notFound, requestId } from './middleware';
 import { apiRouter, type RouteDeps } from './routes';
@@ -81,6 +82,16 @@ export function createApp(deps: AppDeps): Express {
     if (config.METRICS_TOKEN) {
       const header = req.get('Authorization') ?? '';
       if (!header.startsWith('Bearer ') || !safeEqual(header.slice(7), config.METRICS_TOKEN)) return next(Errors.unauthorized());
+    } else if (!isPrivateAddress(req.ip ?? '')) {
+      // Without a token, only loopback / private-network scrapers (Prometheus next to the
+      // server) may read metrics: behind the public HTTPS proxy they would leak to anyone.
+      return next(
+        new AppError({
+          status: 403,
+          code: 'METRICS_FORBIDDEN',
+          message: 'Set METRICS_TOKEN to read /metrics from a public address',
+        }),
+      );
     }
     res.type('text/plain; version=0.0.4').send(metrics.render());
   });

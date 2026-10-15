@@ -106,6 +106,15 @@ describe('messaging', () => {
     expect(res.body.error.details.map((d: { path: string }) => d.path).sort()).toEqual(['chatId', 'text']);
   });
 
+  it('refuses dot-only ids, which would be path segments in upstream URLs', async () => {
+    const { api } = await bootReady();
+    for (const chatId of ['.', '..']) {
+      const res = await api.post('/api/v1/messages/send').set(auth).send({ chatId, text: 'hi' }).expect(400);
+      expect(res.body.error.details[0]).toMatchObject({ path: 'chatId', message: 'must not consist of dots only' });
+    }
+    await api.get('/api/v1/chats/%2E%2E/messages').set(auth).expect(400);
+  });
+
   it('sends text synchronously, or asynchronously with a pollable job', async () => {
     const { api, gateway } = await bootReady();
     const sync = await api.post('/api/v1/messages/send').set(auth).send({ chatId: 'CT_1', text: 'hello', displayName: 'Bot' }).expect(200);
@@ -290,5 +299,31 @@ describe('ops endpoints', () => {
     const metrics = await api.get('/metrics').expect(200);
     expect(metrics.text).toContain('arattai_session_state{state="DISCONNECTED"} 1');
     expect(metrics.text).toContain('http_requests_total');
+  });
+
+  it('serves metrics without a token only to private-network clients', async () => {
+    const { api } = await boot({ TRUST_PROXY: '1' });
+    await api.get('/metrics').set('X-Forwarded-For', '10.1.2.3').expect(200);
+    const res = await api.get('/metrics').set('X-Forwarded-For', '8.8.8.8').expect(403);
+    expect(res.body.error.code).toBe('METRICS_FORBIDDEN');
+
+    const withToken = await boot({ TRUST_PROXY: '1', METRICS_TOKEN: 'metrics-token-0123456789' });
+    await withToken.api.get('/metrics').set('X-Forwarded-For', '8.8.8.8').expect(401);
+    await withToken.api
+      .get('/metrics')
+      .set('X-Forwarded-For', '8.8.8.8')
+      .set('Authorization', 'Bearer metrics-token-0123456789')
+      .expect(200);
+  });
+
+  it('answers client errors from body parsing with their 4xx, not a 500', async () => {
+    const { api } = await boot();
+    const charset = await api
+      .post('/api/v1/auth/session')
+      .set(auth)
+      .set('Content-Type', 'application/json; charset=klingon')
+      .send('{}')
+      .expect(415);
+    expect(charset.body.error).toEqual({ code: 'BAD_REQUEST', message: 'unsupported charset "KLINGON"' });
   });
 });

@@ -13,28 +13,30 @@ class ArattixBot {
   /**
    * @param {object} [options]
    * @param {boolean} [options.isShowQr=true] - Display QR code in terminal.
-   * @param {string|null} [options.proxy=null] - HTTP proxy URL.
+   * @param {string|null} [options.proxy=null] - Not supported: passing a proxy URL throws.
+   *   `axios-cookiejar-support` refuses custom HTTP agents, so route traffic through a proxy
+   *   at the network level instead (VPN, transparent proxy, container network).
    */
   constructor({ isShowQr = true, proxy = null } = {}) {
+    if (proxy) {
+      throw new Error(
+        'ArattixBot: the "proxy" option is not supported (the cookie-jar wrapper rejects custom HTTP agents); ' +
+          'route traffic through a proxy at the network level instead'
+      );
+    }
+
     this.isShowQr = isShowQr;
     this.token = null;
 
-    const jar = new CookieJar();
-    const axiosConfig = {
-      jar,
-      withCredentials: true,
-      // Without a timeout a stalled upstream connection hangs the caller forever.
-      timeout: Defaults.DEFAULT_TIMEOUT,
-      headers: { common: {} },
-    };
-
-    if (proxy) {
-      axiosConfig.proxy = false;
-      const { HttpsProxyAgent } = require('https-proxy-agent');
-      axiosConfig.httpsAgent = new HttpsProxyAgent(proxy);
-    }
-
-    this.session = wrapper(axios.create(axiosConfig));
+    this.session = wrapper(
+      axios.create({
+        jar: new CookieJar(),
+        withCredentials: true,
+        // Without a timeout a stalled upstream connection hangs the caller forever.
+        timeout: Defaults.DEFAULT_TIMEOUT,
+        headers: { common: {} },
+      })
+    );
   }
 
   /**

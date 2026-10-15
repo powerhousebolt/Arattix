@@ -46,6 +46,12 @@ jobs:
       - name: Install library dependencies
         run: npm install --omit=dev --no-audit --no-fund --ignore-scripts --no-package-lock
 
+      - name: Library tests
+        run: npm run test:lib
+
+      - name: Check example scripts
+        run: for f in Example/*.js; do node --check "$f"; done
+
       - name: Install server dependencies
         working-directory: server
         run: npm ci --no-audit --no-fund

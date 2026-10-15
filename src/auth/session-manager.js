@@ -1,5 +1,22 @@
 const fs = require('fs');
-const path = require('path');
+const { Cookie, CookieJar } = require('tough-cookie');
+const Defaults = require('../Defaults');
+
+/**
+ * Write a file that only the current user can read: cookies.json and headers.json hold a
+ * live login (session cookies, CSRF / auth headers).
+ * @param {string} filename
+ * @param {string} contents
+ */
+function writePrivateFile(filename, contents) {
+  fs.writeFileSync(filename, contents, { encoding: 'utf-8', mode: 0o600 });
+  // `mode` only applies when the file is created; tighten files left by older versions too.
+  try {
+    fs.chmodSync(filename, 0o600);
+  } catch (err) {
+    // Not every filesystem supports chmod (e.g. some Windows / network mounts).
+  }
+}
 
 class SessionManager {
   /**
@@ -11,22 +28,22 @@ class SessionManager {
   }
 
   /**
-   * Save cookies to a JSON file.
+   * Save cookies to a JSON file (readable by the current user only).
    * @param {string} filename - Path to save cookies.
    */
   async saveCookies(filename = 'cookies.json') {
     const jar = this.session.defaults.jar;
     const serialized = jar.toJSON();
-    fs.writeFileSync(filename, JSON.stringify(serialized, null, 2), 'utf-8');
+    writePrivateFile(filename, JSON.stringify(serialized, null, 2));
   }
 
   /**
-   * Save headers to a JSON file.
+   * Save headers to a JSON file (readable by the current user only).
    * @param {string} filename - Path to save headers.
    */
   saveHeaders(filename = 'headers.json') {
     const headers = { ...this.session.defaults.headers.common };
-    fs.writeFileSync(filename, JSON.stringify(headers, null, 2), 'utf-8');
+    writePrivateFile(filename, JSON.stringify(headers, null, 2));
   }
 
   /**
@@ -36,7 +53,6 @@ class SessionManager {
   async loadCookies(filename = 'cookies.json') {
     if (!fs.existsSync(filename)) throw new Error(`Cookie file not found: ${filename}`);
 
-    const { CookieJar } = require('tough-cookie');
     const raw = JSON.parse(fs.readFileSync(filename, 'utf-8'));
     const restoredJar = CookieJar.fromJSON(raw);
 
@@ -45,7 +61,6 @@ class SessionManager {
     for (const cookie of stores) {
       const domain = cookie.domain.startsWith('.') ? cookie.domain : '.' + cookie.domain;
       const url = `https://${domain.replace(/^\./, '')}${cookie.path || '/'}`;
-      const { Cookie } = require('tough-cookie');
       const c = Cookie.fromJSON(cookie);
       if (c) {
         await this.session.defaults.jar.setCookie(c, url);
@@ -92,10 +107,9 @@ class SessionManager {
       return false;
     }
 
-    const url = 'https://web.arattai.in/';
     try {
-      await this.session.get(url, {
-        timeout: 10000,
+      await this.session.get(Defaults.WEB_BASE_URL + '/', {
+        timeout: Defaults.DEFAULT_TIMEOUT,
         maxRedirects: 0,
         // Only 2xx counts as valid: an expired session answers with a 3xx redirect to the login page.
         validateStatus: (status) => status >= 200 && status < 300,

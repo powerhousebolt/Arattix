@@ -16,8 +16,8 @@ module.exports = {
   /** V1 Chat list API */
   CHAT_API: 'https://web.arattai.in/v1/chats',
 
-  /** V2 Messages API (returns live data) */
-  MESSAGES_API: (chatId) => `https://web.arattai.in/v2/chats/${chatId}/messages`,
+  /** V2 Messages API (returns live data). The id is encoded so it can never change the path. */
+  MESSAGES_API: (chatId) => `https://web.arattai.in/v2/chats/${encodeURIComponent(chatId)}/messages`,
 
   /** Send text message endpoint */
   SEND_MESSAGE_URL: 'https://web.arattai.in/sendofficechatmessage.do',
@@ -29,7 +29,7 @@ module.exports = {
   FILE_DOWNLOAD_URL: 'https://files.arattai.in/webdownload',
 
   /** V1 attachments fallback download */
-  ATTACHMENTS_URL: (fileId) => `https://web.arattai.in/v1/attachments/${fileId}`,
+  ATTACHMENTS_URL: (fileId) => `https://web.arattai.in/v1/attachments/${encodeURIComponent(fileId)}`,
 
   /** QR code auth endpoint */
   QR_AUTH_URL: 'https://accounts.arattai.in/signin/v2/qrcode',

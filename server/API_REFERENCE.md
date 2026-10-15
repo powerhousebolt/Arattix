@@ -63,9 +63,11 @@ instead of sending twice. Keys are remembered while the job is retained (24 h fo
 |---|---|---|---|
 | 400 | `VALIDATION_FAILED` | Body/query/params invalid; `details` lists `{path, message, code}` per issue | fix request |
 | 400 | `INVALID_JSON` | Body is not valid JSON | fix request |
+| 4xx | `BAD_REQUEST` | Request rejected while reading it (unsupported charset or encoding, aborted body); the status says which | fix request |
 | 400 | `UPLOAD_INVALID` | Multipart problem (too many files/fields, wrong field name) | fix request |
 | 400 | `WEBHOOK_URL_REJECTED` / `WEBHOOK_URL_UNRESOLVABLE` | URL violates the webhook URL policy | fix request |
 | 401 | `UNAUTHORIZED` | Missing/invalid API key (also `/metrics` with `METRICS_TOKEN`) | no |
+| 403 | `METRICS_FORBIDDEN` | `/metrics` from a public address while `METRICS_TOKEN` is unset | set a token |
 | 404 | `NOT_FOUND` / `ROUTE_NOT_FOUND` | Unknown job, webhook, broadcast or route | no |
 | 409 | `SESSION_NOT_READY` | Session is not `READY`; `details.state`, `details.reason` | after login |
 | 409 | `SESSION_EXPIRED` | Arattai rejected the session during the job | after re-scan |
@@ -244,7 +246,7 @@ with `410 JOB_EXPIRED` instead of arriving late.
 | Field | Type | Rules |
 |---|---|---|
 | `type` | `"text"` | optional |
-| `chatId` | string | required; 1–128 chars of `A–Z a–z 0–9 _ . : @ -` |
+| `chatId` | string | required; 1–128 chars of `A–Z a–z 0–9 _ . : @ -`, not dots only (`.`, `..`) |
 | `text` | string | required; ≤ 10 000 chars; not blank. Sent verbatim, so any inline formatting syntax the Arattai client renders (e.g. `*bold*`, `_italic_`) passes through unchanged |
 | `displayName` | string | optional, ≤ 100 chars (the library's `dname` field) |
 | `ttlSeconds` | integer | optional, 5–86 400 |
@@ -1060,6 +1062,9 @@ curl -s "$BASE/health/ready?requireSession=true"    # also requires state READY
 ```bash
 curl -s "$BASE/metrics" -H "Authorization: Bearer $METRICS_TOKEN"   # header only if METRICS_TOKEN is set
 ```
+
+Without `METRICS_TOKEN`, only loopback and private-network clients (`req.ip`, so `TRUST_PROXY`
+must match your proxy) may read metrics; anyone else gets `403 METRICS_FORBIDDEN`.
 
 ```
 # HELP arattai_session_state Current session state (1 = active state).

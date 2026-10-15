@@ -135,9 +135,10 @@ export function sanitizeFileName(name: string | undefined): string {
 export const notFound: RequestHandler = (req, _res, next) => next(Errors.routeNotFound(req.method, req.path));
 
 export function errorHandler(logger: Logger, maxUploadBytes: number): ErrorRequestHandler {
-  return (err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  return (err: unknown, req: Request, res: Response, next: NextFunction) => {
     let e: AppError;
-    const any = err as { type?: string; name?: string; code?: string; status?: number };
+    const any = err as { type?: string; name?: string; code?: string; status?: number; statusCode?: number; expose?: boolean };
+    const clientStatus = any?.status ?? any?.statusCode;
     if (any?.type === 'entity.parse.failed') e = Errors.invalidJson();
     else if (any?.type === 'entity.too.large') e = Errors.payloadTooLarge(Number((err as { limit?: number }).limit ?? 0));
     else if (any?.name === 'MulterError') {
@@ -145,12 +146,22 @@ export function errorHandler(logger: Logger, maxUploadBytes: number): ErrorReque
         any.code === 'LIMIT_FILE_SIZE'
           ? Errors.payloadTooLarge(maxUploadBytes)
           : new AppError({ status: 400, code: 'UPLOAD_INVALID', message: (err as Error).message, details: { reason: any.code } });
+    } else if (!(err instanceof AppError) && typeof clientStatus === 'number' && clientStatus >= 400 && clientStatus < 500) {
+      // http-errors from body-parser / serve-static (bad charset, malformed URI, aborted body):
+      // the client's fault, so answer with its 4xx instead of a logged 500.
+      e = new AppError({
+        status: clientStatus,
+        code: 'BAD_REQUEST',
+        message: any.expose !== false && err instanceof Error ? err.message : 'Bad request',
+      });
     } else e = toAppError(err);
 
     if (e.status >= 500 && e.code === 'INTERNAL') {
       logger.error('Unhandled request error', { component: 'http', requestId: res.locals.requestId, err });
     }
-    if (res.headersSent) return;
+    // Mid-stream failure (e.g. a media download): the status line is gone, so let Express
+    // abort the connection instead of leaving the client waiting on a response that never ends.
+    if (res.headersSent) return next(err);
     if (e.retryAfterMs !== undefined) res.setHeader('Retry-After', String(Math.ceil(e.retryAfterMs / 1000)));
     res.status(e.status).json({
       error: {

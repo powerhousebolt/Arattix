@@ -337,6 +337,7 @@ console.log(Defaults.DOWNLOAD_SERVICE);    // CLIQ
 ├── Example/                 simple-bot, command-bot, docker-bot
 ├── server/                  REST API server (TypeScript); see server/README.md
 ├── docs/                    documentation website (static HTML)
+├── test/                    library unit tests (node:test)
 ├── Dockerfile               arattix-bot image
 ├── Dockerfile.dev           live-reload development image
 └── docker-compose.yml       bot, bot-dev (profile dev), server (profile server)
@@ -346,9 +347,9 @@ console.log(Defaults.DOWNLOAD_SERVICE);    // CLIQ
 
 - **Polling only.** New messages are found by polling; there is no push channel.
 - **No group management or reactions** in the library yet (the server answers `501` for them).
-- **`proxy` option throws.** `axios-cookiejar-support` rejects custom HTTP agents, and
-  `https-proxy-agent` is not a dependency. Route traffic through a proxy at the network level
-  instead.
+- **No `proxy` option.** `axios-cookiejar-support` rejects custom HTTP agents, so passing
+  `proxy` to `ArattixBot` throws a clear error. Route traffic through a proxy at the network
+  level instead.
 - **Logout is local.** Deleting `cookies.json`/`headers.json` does not end the session on
   Arattai's side; sign out from the Arattai app for that.
 - **No delivery or read receipts.**
@@ -360,7 +361,8 @@ console.log(Defaults.DOWNLOAD_SERVICE);    // CLIQ
 
 | Script | Does |
 |---|---|
-| `npm test` | run the server test suite (covers the library too) |
+| `npm test` | run the library unit tests, then the server test suite |
+| `npm run test:lib` | library unit tests only (`node:test`, no network) |
 | `npm run example` | run `Example/simple-bot.js` |
 | `npm run docker:build` | build the `arattix-bot` image |
 | `npm run docker:run` | run the bot image interactively with the `arattix-bot-data` volume |

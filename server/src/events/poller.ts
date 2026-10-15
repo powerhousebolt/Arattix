@@ -64,6 +64,8 @@ export class InboundPoller {
   private roundRobin = 0;
   private failures = 0;
   private timer: NodeJS.Timeout | null = null;
+  /** Bumped by start()/stop(): a tick from an older run must not schedule another one. */
+  private loop = 0;
   private running = false;
   private active = false;
   private stopRequested = false;
@@ -98,6 +100,7 @@ export class InboundPoller {
   start(): void {
     if (this.active) return;
     this.active = true;
+    this.loop += 1;
     this.stopRequested = false;
     this.failures = 0;
     this.tick = 0;
@@ -106,6 +109,7 @@ export class InboundPoller {
 
   stop(): void {
     this.active = false;
+    this.loop += 1;
     this.stopRequested = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -239,8 +243,12 @@ export class InboundPoller {
 
   private schedule(delay: number): void {
     if (!this.active) return;
+    const loop = this.loop;
     this.timer = setTimeout(async () => {
       await this.runOnce();
+      // stop() + start() while this tick ran (a quick reconnect) already began a new loop:
+      // rescheduling here too would poll twice as often from then on.
+      if (loop !== this.loop) return;
       const o = this.deps.options;
       const next = this.failures === 0 ? o.intervalMs : Math.min(o.maxIntervalMs, o.intervalMs * 2 ** this.failures);
       this.schedule(next);
